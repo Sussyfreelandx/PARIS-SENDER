@@ -76,6 +76,35 @@ function queryString(params = {}) {
 }
 
 export const getHealth = () => get('/health');
+
+/**
+ * Poll the backend /health endpoint until it responds or all attempts are
+ * exhausted. This smooths over the brief window on startup where the backend
+ * process is launching and the connection has not yet stabilized, so a single
+ * transient "Failed to fetch" does not surface as a UI error.
+ *
+ * @param {object} [options]
+ * @param {number} [options.attempts=20] Maximum number of attempts.
+ * @param {number} [options.intervalMs=1000] Delay between attempts.
+ * @param {(attempt: number, error: Error) => void} [options.onRetry]
+ *   Optional callback invoked after each failed attempt (1-indexed).
+ * @returns {Promise<object>} The successful /health payload.
+ */
+export async function getHealthWithRetry({ attempts = 20, intervalMs = 1000, onRetry } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await getHealth();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        if (onRetry) onRetry(attempt, error);
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    }
+  }
+  throw lastError || new Error('Backend health check failed');
+}
 export const getHealthStatus = () => get('/health/status');
 export const getDomainHealth = (domain) => get(`/health/domain/${encodeURIComponent(domain)}`);
 export const getServerHealth = (id) => get(`/health/server/${encodeURIComponent(id)}`);
