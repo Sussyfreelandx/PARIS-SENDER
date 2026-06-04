@@ -5,9 +5,9 @@ const SETTINGS_KEY = 'paris_sender_settings';
 
 function readSettings() {
   try {
-    return { senderName: 'Paris Sender', nonSmtpDefault: false, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    return { senderName: 'PARIS SENDER', nonSmtpDefault: false, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
   } catch {
-    return { senderName: 'Paris Sender', nonSmtpDefault: false };
+    return { senderName: 'PARIS SENDER', nonSmtpDefault: false };
   }
 }
 

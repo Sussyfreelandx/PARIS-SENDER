@@ -64,7 +64,7 @@ export default function App() {
       <main className="content">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Electron + React</p>
+            <p className="eyebrow">PARIS SENDER</p>
             <h1>{active}</h1>
           </div>
           <div className="topbar-actions">

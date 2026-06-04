@@ -56,10 +56,10 @@ export default function Deliverability() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
-    subject: 'A note from Paris Sender',
-    content: 'Hello [firstname],\n\nThis is a clean campaign preview.',
-    sender: 'sender@example.com',
-    recipients: 'a@example.com',
+    subject: 'Campaign readiness check',
+    content: 'Hello [firstname],\n\nPlease review this message before sending.',
+    sender: '',
+    recipients: '',
     html: false
   });
 

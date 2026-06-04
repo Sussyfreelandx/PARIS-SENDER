@@ -1,11 +1,11 @@
-# Paris Sender Electron Frontend
+# PARIS SENDER Electron Frontend
 
-Phase 2 replaces the legacy Tkinter UI with an Electron shell and a Vite + React renderer.
+PARIS SENDER uses an Electron shell and a Vite + React renderer.
 
 ## Prerequisites
 
 - Node.js 20+
-- The Paris Sender FastAPI backend running at `http://127.0.0.1:8000`
+- Python with the backend requirements installed for development
 
 ## Install
 
@@ -20,7 +20,7 @@ npm install
 npm run dev
 ```
 
-The dev script starts Vite on port 5173, waits for it, then launches Electron with hot reload from the Vite dev server.
+The dev script starts Vite on port 5173, waits for it, then launches Electron with hot reload from the Vite dev server. Electron also starts `../run_backend.py` on `http://127.0.0.1:8000` and waits for `/health` before opening the UI.
 
 ## Build
 

@@ -8,13 +8,13 @@ function readNonSmtpDefault() {
   try { return Boolean(JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}').nonSmtpDefault); } catch { return false; }
 }
 
-const sampleTemplate = 'Hello [firstname],\n\nWe have a quick update from {{ company }} for {{ email }}.';
+const defaultTemplate = 'Hello [firstname],\n\nHere is the latest update from PARIS SENDER.';
 
 export default function ComposeEditor() {
   const [html, setHtml] = useState(false);
-  const [template, setTemplate] = useState(sampleTemplate);
-  const [sampleEmail, setSampleEmail] = useState('camille@example.com');
-  const [preview, setPreview] = useState({ rendered: sampleTemplate, context: {} });
+  const [template, setTemplate] = useState(defaultTemplate);
+  const [previewEmail, setPreviewEmail] = useState('');
+  const [preview, setPreview] = useState({ rendered: defaultTemplate, context: {} });
   const [analysis, setAnalysis] = useState(null);
   const [error, setError] = useState('');
   const [nonSmtpDelivery, setNonSmtpDelivery] = useState(readNonSmtpDefault);
@@ -29,7 +29,7 @@ export default function ComposeEditor() {
       setError('');
       try {
         const [previewResult, analysisResult] = await Promise.all([
-          previewCompose({ template, email: sampleEmail, html }),
+          previewCompose({ template, email: previewEmail, html }),
           analyzeCompose({ content: template, html })
         ]);
         setPreview(previewResult);
@@ -39,7 +39,7 @@ export default function ComposeEditor() {
       }
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [template, sampleEmail, html]);
+  }, [template, previewEmail, html]);
 
   const ratio = Math.round(Number(analysis?.html_text_ratio || 0) * 100);
   const warnings = useMemo(() => [
@@ -61,8 +61,8 @@ export default function ComposeEditor() {
           </div>
         </div>
         <div className="form-row">
-          <label>Sample recipient for autograb personalization</label>
-          <input value={sampleEmail} onChange={(event) => setSampleEmail(event.target.value)} placeholder="recipient@example.com" />
+          <label>Recipient email for personalization preview</label>
+          <input value={previewEmail} onChange={(event) => setPreviewEmail(event.target.value)} placeholder="recipient@example.com" />
         </div>
         <div className="form-row">
           <label>{html ? 'HTML template' : 'Plain text template'}</label>

@@ -2,7 +2,7 @@
   "name": "paris-sender-electron",
   "version": "0.2.0",
   "private": true,
-  "description": "Phase 2 Electron + React frontend for Paris Sender",
+  "description": "PARIS SENDER desktop frontend",
   "main": "main/main.js",
   "type": "module",
   "scripts": {
@@ -20,8 +20,8 @@
     "react-dom": "latest"
   },
   "build": {
-    "appId": "com.parissender.app",
-    "productName": "Paris Sender",
+    "appId": "com.paris.sender",
+    "productName": "PARIS SENDER",
     "directories": {
       "output": "out",
       "buildResources": "build"

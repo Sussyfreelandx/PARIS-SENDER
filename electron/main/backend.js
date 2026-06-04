@@ -3,9 +3,14 @@ import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { app } from 'electron';
 
 const HOST = '127.0.0.1';
+const DEV_PORT = 8000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '..', '..');
 
 let backendProcess = null;
 
@@ -26,6 +31,10 @@ function findFreePort() {
 function resolveBackendBinary() {
   const exeName = process.platform === 'win32' ? 'paris-backend.exe' : 'paris-backend';
   return path.join(process.resourcesPath, 'backend', exeName);
+}
+
+function resolveDevBackendScript() {
+  return path.join(repoRoot, 'run_backend.py');
 }
 
 /** Poll the backend /health endpoint until it responds or the timeout elapses. */
@@ -64,16 +73,34 @@ function waitForHealth(port, { timeoutMs = 30000, intervalMs = 300 } = {}) {
  * script point the renderer at the correct backend URL.
  */
 export async function startBackend() {
-  const binary = resolveBackendBinary();
-  if (!fs.existsSync(binary)) {
-    throw new Error(`Backend executable not found at ${binary}`);
-  }
-
-  const port = await findFreePort();
+  const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+  const port = isDev ? DEV_PORT : await findFreePort();
   process.env.PARIS_HOST = HOST;
   process.env.PARIS_PORT = String(port);
 
-  backendProcess = spawn(binary, [], {
+  let command;
+  let args;
+  let cwd;
+
+  if (isDev) {
+    const script = resolveDevBackendScript();
+    if (!fs.existsSync(script)) {
+      throw new Error(`Backend entrypoint not found at ${script}`);
+    }
+    command = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
+    args = [script];
+    cwd = repoRoot;
+  } else {
+    const binary = resolveBackendBinary();
+    if (!fs.existsSync(binary)) {
+      throw new Error(`Backend executable not found at ${binary}`);
+    }
+    command = binary;
+    args = [];
+  }
+
+  backendProcess = spawn(command, args, {
+    cwd,
     env: { ...process.env, PARIS_HOST: HOST, PARIS_PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
@@ -81,6 +108,10 @@ export async function startBackend() {
 
   backendProcess.stdout?.on('data', (chunk) => process.stdout.write(`[backend] ${chunk}`));
   backendProcess.stderr?.on('data', (chunk) => process.stderr.write(`[backend] ${chunk}`));
+  backendProcess.on('error', (error) => {
+    backendProcess = null;
+    console.error('Backend failed to start', error);
+  });
   backendProcess.on('exit', (code, signal) => {
     backendProcess = null;
     if (code && code !== 0) {

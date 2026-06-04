@@ -15,7 +15,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0f172a',
-    title: 'Paris Sender',
+    title: 'PARIS SENDER',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -59,20 +59,18 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  // In development the backend is started separately (npm run dev assumes the
-  // FastAPI server is already running on :8000). In the packaged app we launch
-  // and supervise the bundled backend executable before opening the UI.
+  try {
+    await startBackend();
+  } catch (error) {
+    dialog.showErrorBox(
+      'PARIS SENDER',
+      `Failed to start the backend service.\n\n${error?.message || error}`
+    );
+    app.quit();
+    return;
+  }
+
   if (!isDev) {
-    try {
-      await startBackend();
-    } catch (error) {
-      dialog.showErrorBox(
-        'Paris Sender',
-        `Failed to start the backend service.\n\n${error?.message || error}`
-      );
-      app.quit();
-      return;
-    }
     initAutoUpdate();
   }
 

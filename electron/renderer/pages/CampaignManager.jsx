@@ -26,8 +26,8 @@ export default function CampaignManager() {
   const [domains, setDomains] = useState([]);
   const [domainName, setDomainName] = useState('');
   const [localPart, setLocalPart] = useState('noreply');
-  const [subject, setSubject] = useState('A note from Paris Sender');
-  const [content, setContent] = useState('Hello [firstname],\n\nThis is your campaign message.');
+  const [subject, setSubject] = useState('A note from PARIS SENDER');
+  const [content, setContent] = useState('Hello [firstname],\n\nHere is the latest campaign update.');
   const [html, setHtml] = useState(false);
   const [nonSmtpDelivery, setNonSmtpDelivery] = useState(() => Boolean(readJson(SETTINGS_KEY, {}).nonSmtpDefault));
   const [result, setResult] = useState(null);

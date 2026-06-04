@@ -19,8 +19,8 @@ export default function Sidebar({ screens, active, onChange }) {
       <div className="brand">
         <div className="brand-mark">PS</div>
         <div>
-          <strong>Paris Sender</strong>
-          <span>Phase 2 Console</span>
+          <strong>PARIS SENDER</strong>
+          <span>Operations Console</span>
         </div>
       </div>
       <nav>
