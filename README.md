@@ -2,7 +2,7 @@
 
 ## 🚀 Overview
 
-Paris Sender is a desktop email operations platform built with:
+PARIS SENDER is a desktop email operations platform built with:
 
 - **Electron** — Desktop UI
 - **FastAPI** — Backend engine
@@ -21,9 +21,9 @@ end users never run Python or start a server manually.
 
 ### ✔ Windows
 
-1. Download the installer: **`Paris Sender-Setup-<version>.exe`**
+1. Download the installer: **`PARIS SENDER-Setup-<version>.exe`**
 2. Double-click the installer and follow the prompts.
-3. Launch **Paris Sender** from the Desktop or Start Menu shortcut.
+3. Launch **PARIS SENDER** from the Desktop or Start Menu shortcut.
 
 The app will:
 
@@ -33,8 +33,8 @@ The app will:
 
 ### ✔ Mac
 
-1. Open **`Paris Sender-<version>.dmg`**
-2. Drag **Paris Sender** to **Applications**
+1. Open **`PARIS SENDER-<version>.dmg`**
+2. Drag **PARIS SENDER** to **Applications**
 3. Open the application.
 
 The backend starts automatically inside the app.
@@ -109,8 +109,8 @@ resource. The electron-builder configuration lives in the `build` block of
 
 Outputs (written to `electron/out/`):
 
-- **Windows:** `Paris Sender-Setup-<version>.exe`
-- **Mac:** `Paris Sender-<version>.dmg`
+- **Windows:** `PARIS SENDER-Setup-<version>.exe`
+- **Mac:** `PARIS SENDER-<version>.dmg`
 
 ### Single-click startup model
 
