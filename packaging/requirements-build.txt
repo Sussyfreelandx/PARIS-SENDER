@@ -1,0 +1,4 @@
+# Build-time dependencies for producing the distributable desktop bundle.
+# Install alongside requirements.txt before running the PyInstaller spec:
+#   pip install -r requirements.txt -r packaging/requirements-build.txt
+pyinstaller>=6.0

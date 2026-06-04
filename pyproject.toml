@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "unit: fast service/model/repository tests",
+    "integration: cross-service API and repository flow tests",
+    "e2e: end-to-end API/UI flow tests",
+    "performance: lightweight benchmark/throughput checks",
+    "slow: tests that may take longer than the default suite",
+]
+
+[tool.coverage.run]
+source = ["backend"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
