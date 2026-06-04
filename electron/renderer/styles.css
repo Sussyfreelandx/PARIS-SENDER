@@ -85,3 +85,14 @@ button.small { padding: 7px 10px; font-size: 12px; }
   .grid.two, .grid.three, .form-row.inline { grid-template-columns: 1fr; }
   .log-row { grid-template-columns: 1fr; }
 }
+
+/* Backend connection / boot screen (shown until the health check resolves). */
+.boot-screen { min-height: 100vh; width: 100%; display: grid; place-items: center; padding: 32px; }
+.boot-card { background: rgba(15, 23, 42, .82); border: 1px solid rgba(148, 163, 184, .18); border-radius: 18px; padding: 36px 40px; box-shadow: 0 18px 50px rgba(0, 0, 0, .2); display: flex; flex-direction: column; align-items: center; gap: 16px; max-width: 420px; text-align: center; }
+.boot-mark { width: 56px; height: 56px; border-radius: 16px; font-size: 20px; }
+.boot-title { margin: 0; font-size: 24px; letter-spacing: .02em; }
+.boot-spinner { width: 38px; height: 38px; border-radius: 50%; border: 3px solid rgba(148, 163, 184, .25); border-top-color: #38bdf8; animation: boot-spin .9s linear infinite; }
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-message { margin: 0; color: #cbd5e1; font-size: 15px; }
+.boot-error { color: #fecaca; font-weight: 700; }
+.boot-detail { margin: 0; font-size: 13px; word-break: break-word; }

@@ -84,13 +84,13 @@ export const getHealth = () => get('/health');
  * transient "Failed to fetch" does not surface as a UI error.
  *
  * @param {object} [options]
- * @param {number} [options.attempts=20] Maximum number of attempts.
+ * @param {number} [options.attempts=30] Maximum number of attempts.
  * @param {number} [options.intervalMs=1000] Delay between attempts.
  * @param {(attempt: number, error: Error) => void} [options.onRetry]
  *   Optional callback invoked after each failed attempt (1-indexed).
  * @returns {Promise<object>} The successful /health payload.
  */
-export async function getHealthWithRetry({ attempts = 20, intervalMs = 1000, onRetry } = {}) {
+export async function getHealthWithRetry({ attempts = 30, intervalMs = 1000, onRetry } = {}) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
