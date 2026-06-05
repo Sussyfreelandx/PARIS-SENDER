@@ -135,12 +135,19 @@ class DnspythonResolver:
 # DNS provider that operates it. Used to detect where a domain's DNS is hosted so
 # the UI can show provider-specific instructions for publishing DKIM/SPF/DMARC.
 _DNS_PROVIDER_SIGNATURES: tuple[tuple[str, str], ...] = (
+    # Registrars / DNS hosts (most specific substrings first).
     ("cloudflare", "Cloudflare"),
     ("awsdns", "AWS Route 53"),
     ("domaincontrol.com", "GoDaddy"),
-    ("googledomains.com", "Google Domains"),
+    ("godaddy", "GoDaddy"),
     ("registrar-servers.com", "Namecheap"),
     ("namecheaphosting.com", "Namecheap"),
+    ("namecheap", "Namecheap"),
+    ("googledomains.com", "Google Domains"),
+    ("googledomains", "Google Domains"),
+    ("domains.google", "Google Domains"),
+    ("google.com", "Google Cloud DNS"),
+    ("ns.cloudflare.com", "Cloudflare"),
     ("dnsmadeeasy.com", "DNS Made Easy"),
     ("digitalocean.com", "DigitalOcean"),
     ("azure-dns", "Azure DNS"),
@@ -149,6 +156,7 @@ _DNS_PROVIDER_SIGNATURES: tuple[tuple[str, str], ...] = (
     ("name.com", "Name.com"),
     ("gandi.net", "Gandi"),
     ("ovh.net", "OVH"),
+    ("ovh.com", "OVH"),
     ("bluehost.com", "Bluehost"),
     ("hostgator.com", "HostGator"),
     ("dreamhost.com", "DreamHost"),
@@ -157,18 +165,144 @@ _DNS_PROVIDER_SIGNATURES: tuple[tuple[str, str], ...] = (
     ("wixdns.net", "Wix"),
     ("shopify.com", "Shopify"),
     ("vercel-dns.com", "Vercel"),
-    ("nsone.net", "NS1"),
     ("linode.com", "Linode"),
+    ("linodedns.com", "Linode"),
     ("hetzner.com", "Hetzner"),
+    ("hetzner.de", "Hetzner"),
     ("zoneedit.com", "ZoneEdit"),
-    ("googledomains", "Google Domains"),
-    ("google.com", "Google Cloud DNS"),
+    # Expanded coverage so the large registrars/hosts most domains use are all
+    # recognised (the previous short list missed many popular providers).
+    ("ui-dns.", "IONOS"),
+    ("ionos.", "IONOS"),
+    ("1and1.", "IONOS"),
+    ("hostinger.com", "Hostinger"),
+    ("hostingerdns.com", "Hostinger"),
+    ("porkbun.com", "Porkbun"),
+    ("hover.com", "Hover"),
+    ("dnsowl.com", "Hover"),
+    ("namesilo.com", "NameSilo"),
+    ("dynadot.com", "Dynadot"),
+    ("enom.com", "Enom"),
+    ("name-services.com", "Enom"),
+    ("worldnic.com", "Network Solutions"),
+    ("networksolutions.com", "Network Solutions"),
+    ("register.com", "Register.com"),
+    ("registereddomains.com", "Register.com"),
+    ("domain.com", "Domain.com"),
+    ("a2hosting.com", "A2 Hosting"),
+    ("siteground.net", "SiteGround"),
+    ("inmotionhosting.com", "InMotion Hosting"),
+    ("greengeeks.com", "GreenGeeks"),
+    ("messagingengine.com", "Fastmail"),
+    ("fastmail.com", "Fastmail"),
+    ("zoho.com", "Zoho"),
+    ("zohocloud.com", "Zoho"),
+    ("cloudns.net", "ClouDNS"),
+    ("constellix.com", "Constellix"),
+    ("ultradns.", "UltraDNS"),
+    ("akam.net", "Akamai"),
+    ("akamai", "Akamai"),
+    ("fastly.net", "Fastly"),
+    ("netlify.com", "Netlify"),
+    ("nsone.net", "NS1"),
+    ("rackspace.com", "Rackspace"),
+    ("stabletransit.com", "Rackspace"),
+    ("liquidweb.com", "Liquid Web"),
+    ("mediatemple.net", "Media Temple"),
+    ("weebly.com", "Weebly"),
+    ("siteground.eu", "SiteGround"),
+    ("ezoic.com", "Ezoic"),
+    ("wordpress.com", "WordPress.com"),
+    ("automattic.com", "WordPress.com"),
+    ("kinsta.com", "Kinsta"),
+    ("flywheel.com", "Flywheel"),
+    ("cloudflare.net", "Cloudflare"),
+    ("dns.com", "DNS.com"),
+    ("yandex.net", "Yandex"),
+    ("nic.ru", "RU-CENTER"),
+    ("beget.com", "Beget"),
+    ("timeweb.ru", "Timeweb"),
+    ("reg.ru", "REG.RU"),
+    ("transip.net", "TransIP"),
+    ("openprovider.nl", "Openprovider"),
+    ("combell.com", "Combell"),
+    ("one.com", "One.com"),
+    ("loopia.se", "Loopia"),
+    ("inwx.de", "INWX"),
+    ("infomaniak.com", "Infomaniak"),
+    ("scaleway.com", "Scaleway"),
+    ("online.net", "Scaleway"),
+    ("vultr.com", "Vultr"),
+    ("dns.he.net", "Hurricane Electric"),
 )
 
 # Providers that historically auto-append the domain to a TXT host name. For these
 # the operator must enter the host WITHOUT the trailing domain to avoid a doubled
 # name like ``selector._domainkey.example.com.example.com``.
-_HOST_SUFFIX_STRIPPING_PROVIDERS = frozenset({"GoDaddy", "Namecheap", "Bluehost", "HostGator", "Cloudflare"})
+_HOST_SUFFIX_STRIPPING_PROVIDERS = frozenset(
+    {
+        "GoDaddy",
+        "Namecheap",
+        "Bluehost",
+        "HostGator",
+        "Cloudflare",
+        "IONOS",
+        "Hostinger",
+        "Network Solutions",
+        "Register.com",
+        "Domain.com",
+        "A2 Hosting",
+        "SiteGround",
+        "InMotion Hosting",
+        "GreenGeeks",
+        "Hover",
+        "NameSilo",
+        "Dynadot",
+        "Porkbun",
+    }
+)
+
+# DKIM keys live at ``<selector>._domainkey.<domain>`` and every mail provider
+# uses its own selector name. To detect an *existing* DKIM record with high
+# accuracy (instead of only the key this app generated) the scan probes the
+# domain's configured selector first and then this curated set of selectors used
+# by the major email providers. Non-existent selectors return a fast NXDOMAIN, so
+# scanning the list stays quick and the search stops at the first match.
+_DKIM_COMMON_SELECTORS: tuple[str, ...] = (
+    "default",          # cPanel / Namecheap / GoDaddy shared hosting, generic
+    "google",           # Google Workspace
+    "selector1",        # Microsoft 365
+    "selector2",        # Microsoft 365 (rotation)
+    "k1", "k2", "k3",   # Mailchimp / Mandrill, Mailgun
+    "s1", "s2",         # SendGrid, generic
+    "dkim",             # generic
+    "mail",             # Brevo/Sendinblue, generic
+    "email",            # generic
+    "smtp",             # generic / Mailgun
+    "mx",               # generic
+    "zoho", "zmail",    # Zoho Mail
+    "mandrill",         # Mandrill
+    "mailgun", "mg",    # Mailgun
+    "pm",               # Postmark
+    "fm1", "fm2", "fm3", "mesmtp",  # Fastmail
+    "protonmail", "protonmail2", "protonmail3",  # Proton Mail
+    "s2048", "s1024",   # Yahoo / AOL
+    "dk",               # ActiveCampaign / legacy DomainKeys
+    "sig1",             # iCloud / Apple
+    "scph0", "scph1",   # SparkPost
+    "ctct1", "ctct2",   # Constant Contact
+    "sib",              # Sendinblue/Brevo
+    "everlytickey1", "everlytickey2",  # Everlytic
+    "turbo-smtp",       # turboSMTP
+    "key1", "key2",     # generic
+    "selector",         # generic
+    "amazonses",        # Amazon SES (legacy)
+)
+
+# Valid DMARC policy values, ordered from least to most strict. Used when the
+# published policy is auto-detected from DNS so the stored policy always reflects
+# what is actually published at the provider rather than a manually chosen value.
+_DMARC_POLICIES = ("none", "quarantine", "reject")
 
 
 @dataclass(slots=True)
@@ -370,17 +504,35 @@ class DomainService:
         return self.repository.delete(domain_id)
 
     def verify_domain(self, domain_id: int) -> Domain:
-        """Run DNS checks for DKIM/SPF/DMARC and update status and health score."""
+        """Run DNS checks for DKIM/SPF/DMARC and update status and health score.
+
+        DKIM is detected across the domain's configured selector plus the common
+        selectors used by the major mail providers, so an *existing* DKIM record
+        is matched even when this app did not generate it. The DMARC policy is
+        read back from the published record so the stored policy always reflects
+        what is actually published (it is never chosen manually)."""
         domain = self._require(domain_id)
         records = self.required_records(domain)
         for record in records:
-            record.verified, record.error = self._check_record(record)
             if record.record_type is RecordType.DKIM:
-                domain.dkim_verified = record.verified
+                verified, error, selector = self._verify_dkim(domain)
+                record.verified, record.error = verified, error
+                domain.dkim_verified = verified
+                if verified and selector:
+                    domain.metadata["dkim_detected_selector"] = selector
             elif record.record_type is RecordType.SPF:
+                record.verified, record.error = self._check_record(record)
                 domain.spf_verified = record.verified
             elif record.record_type is RecordType.DMARC:
-                domain.dmarc_verified = record.verified
+                verified, error, policy, published_value = self._verify_dmarc(domain)
+                record.verified, record.error = verified, error
+                domain.dmarc_verified = verified
+                if verified:
+                    if policy:
+                        domain.dmarc_policy = policy
+                    if published_value:
+                        domain.dmarc_record = published_value
+                        record.value = published_value
         domain.last_checked_at = datetime.now(timezone.utc)
         self._apply_status(domain)
         return self.repository.update(domain)
@@ -428,7 +580,7 @@ class DomainService:
         provider = detect_dns_provider(domain.name, self.resolver)
         record_reports: list[dict[str, object]] = []
         for record in self.required_records(domain):
-            record_reports.append(self._diagnose_record(record, provider))
+            record_reports.append(self._diagnose_record(record, provider, domain))
         verified = [r for r in record_reports if r["verified"]]
         failing = [r for r in record_reports if not r["verified"]]
         summary = (
@@ -447,7 +599,27 @@ class DomainService:
             "failing_count": len(failing),
         }
 
-    def _diagnose_record(self, record: DnsRecord, provider: DnsProviderInfo) -> dict[str, object]:
+    def _diagnose_record(self, record: DnsRecord, provider: DnsProviderInfo, domain: Domain) -> dict[str, object]:
+        # DKIM is detected across many selectors; report against the selector that
+        # actually published a record so the diagnosis matches verification.
+        if record.record_type is RecordType.DKIM:
+            verified, _error, selector = self._verify_dkim(domain)
+            host = f"{selector}._domainkey.{domain.name}" if selector else record.host
+            try:
+                published = self.resolver.resolve_txt(host)
+            except Exception:  # noqa: BLE001 - defensive
+                published = []
+            hint = "" if verified else self._record_hint(record, self._safe_resolve(record.host), provider)
+            return {
+                "record_type": record.record_type.value,
+                "host": host,
+                "expected": record.value,
+                "published": list(published),
+                "verified": verified,
+                "error": None if verified else "DKIM record not found at any known selector.",
+                "hint": hint,
+                "detected_selector": selector,
+            }
         try:
             published = self.resolver.resolve_txt(record.host)
         except Exception:  # noqa: BLE001 - defensive; report a generic message instead of crashing
@@ -466,6 +638,12 @@ class DomainService:
             "error": error,
             "hint": hint,
         }
+
+    def _safe_resolve(self, host: str) -> list[str]:
+        try:
+            return self.resolver.resolve_txt(host)
+        except Exception:  # noqa: BLE001 - defensive
+            return []
 
     def _record_hint(self, record: DnsRecord, published: list[str], provider: DnsProviderInfo) -> str:
         suffix = f" {provider.guidance}" if provider.provider != "Unknown" else ""
@@ -577,6 +755,80 @@ class DomainService:
     def _dkim_public_token(value: str) -> str:
         match = re.search(r"p=([A-Za-z0-9+/=]+)", value)
         return match.group(1) if match else ""
+
+    @staticmethod
+    def _is_dkim_record(entry: str) -> bool:
+        """Return True if a TXT string is a usable (non-revoked) DKIM record.
+
+        Accepts records that either declare ``v=DKIM1`` (the common case) or, for
+        the minority of records that omit the optional version tag, carry a
+        non-empty ``p=`` public key. A record with an empty ``p=`` is a revoked
+        key and is treated as not published."""
+        normalized = entry.replace(" ", "")
+        lowered = normalized.lower()
+        token = DomainService._dkim_public_token(normalized)
+        if "v=dkim1" in lowered:
+            return bool(token)
+        return bool(token)
+
+    def _dkim_selectors(self, domain: Domain) -> list[str]:
+        """Ordered, de-duplicated selectors to probe (configured selector first)."""
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for selector in (domain.dkim_selector, *_DKIM_COMMON_SELECTORS):
+            normalized = (selector or "").strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                ordered.append(normalized)
+        return ordered
+
+    def _verify_dkim(self, domain: Domain) -> tuple[bool, str | None, str | None]:
+        """Detect a published DKIM record across common selectors.
+
+        Probes the configured selector first, then the curated provider selector
+        list, stopping at the first selector that publishes a usable DKIM record.
+        Returns ``(verified, error, matched_selector)``."""
+        lookup_failed = False
+        for selector in self._dkim_selectors(domain):
+            host = f"{selector}._domainkey.{domain.name}"
+            try:
+                published = self.resolver.resolve_txt(host)
+            except Exception:  # noqa: BLE001 - one selector failing must not abort the scan
+                lookup_failed = True
+                continue
+            for entry in published:
+                if self._is_dkim_record(entry):
+                    return True, None, selector
+        if lookup_failed:
+            return False, "DKIM record not found (DNS lookup failed for one or more selectors).", None
+        return False, "DKIM record not found at any known selector.", None
+
+    def _verify_dmarc(self, domain: Domain) -> tuple[bool, str | None, str | None, str | None]:
+        """Verify the DMARC record and read back its policy from DNS.
+
+        Returns ``(verified, error, detected_policy, published_value)`` so the
+        caller can store the policy that is actually published instead of one
+        chosen manually."""
+        host = f"_dmarc.{domain.name}"
+        try:
+            published = self.resolver.resolve_txt(host)
+        except Exception:  # pragma: no cover - defensive
+            return False, f"DNS lookup failed for '{host}'.", None, None
+        if not published:
+            return False, "no TXT record published", None, None
+        for entry in published:
+            if entry.strip().lower().startswith("v=dmarc1"):
+                return True, None, self._detect_dmarc_policy(entry), entry.strip()
+        return False, "DMARC record not found", None, None
+
+    @staticmethod
+    def _detect_dmarc_policy(value: str) -> str | None:
+        """Extract the ``p=`` policy tag from a published DMARC record."""
+        match = re.search(r"\bp\s*=\s*([A-Za-z]+)", value)
+        if not match:
+            return None
+        policy = match.group(1).strip().lower()
+        return policy if policy in _DMARC_POLICIES else None
 
     def _require(self, domain_id: int) -> Domain:
         domain = self.repository.get(domain_id)

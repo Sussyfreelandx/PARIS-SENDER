@@ -79,6 +79,16 @@ button.small { padding: 7px 10px; font-size: 12px; }
 .switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
 .switch input { width: auto; }
 
+.attachment-picker { display: grid; gap: 12px; }
+.file-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 22px; border: 2px dashed rgba(129, 140, 248, .55); border-radius: 16px;
+  background: rgba(30, 41, 59, .45); cursor: pointer; text-align: center; transition: border-color .15s, background .15s;
+}
+.file-drop:hover { border-color: #818cf8; background: rgba(30, 41, 59, .7); }
+.file-drop input[type="file"] { width: 100%; max-width: 320px; cursor: pointer; }
+.file-drop-cta { font-weight: 700; color: #c7d2fe; }
+
 @media (max-width: 960px) {
   .app-shell { flex-direction: column; }
   .sidebar { position: static; width: 100%; height: auto; }

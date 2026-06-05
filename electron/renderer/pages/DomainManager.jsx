@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { autoVerifyDomain, createDomain, deleteDomain, diagnoseDomain, getDomain, getDomainHistory, getDomains, rotateDkim, updateDmarcPolicy, verifyDomain } from '../api/client.js';
+import { autoVerifyDomain, createDomain, deleteDomain, diagnoseDomain, getDomain, getDomainHistory, getDomains, rotateDkim, verifyDomain } from '../api/client.js';
 import { StatusBadge, VerifiedBadge } from '../components/Badge.jsx';
 import CopyButton from '../components/CopyButton.jsx';
 import HealthBars from '../components/HealthBars.jsx';
 
-const initialForm = { name: '', selector: 'default', dmarc_policy: 'none', spf_includes: '' };
+const initialForm = { name: '', selector: 'default', spf_includes: '' };
 
 // Bounded auto-scan tuning: small, fast retries so the UI never hangs while DNS
 // records propagate. Each attempt runs a deep multi-resolver DKIM/SPF/DMARC scan
@@ -20,7 +20,6 @@ export default function DomainManager() {
   const [selected, setSelected] = useState(null);
   const [history, setHistory] = useState([]);
   const [form, setForm] = useState(initialForm);
-  const [policy, setPolicy] = useState('none');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [diagnosis, setDiagnosis] = useState(null);
@@ -43,7 +42,6 @@ export default function DomainManager() {
     }
     const [domainResult, historyResult] = await Promise.all([getDomain(id), getDomainHistory(id).catch(() => ({ history: [] }))]);
     setSelected(domainResult);
-    setPolicy(domainResult.dmarc_policy || 'none');
     setHistory(historyResult.history || []);
   }
 
@@ -190,9 +188,9 @@ export default function DomainManager() {
               <div><label>DKIM selector</label><input value={form.selector} onChange={(event) => setForm({ ...form, selector: event.target.value })} required /></div>
             </div>
             <div className="form-row inline">
-              <div><label>DMARC policy</label><select value={form.dmarc_policy} onChange={(event) => setForm({ ...form, dmarc_policy: event.target.value })}><option value="none">none</option><option value="quarantine">quarantine</option><option value="reject">reject</option></select></div>
               <div><label>SPF includes</label><input value={form.spf_includes} onChange={(event) => setForm({ ...form, spf_includes: event.target.value })} placeholder="include:_spf.example.com" /></div>
             </div>
+            <p className="muted">The DMARC policy is detected automatically from your DNS provider during the scan — no need to choose one.</p>
             <button className="primary" disabled={busy} type="submit">Add domain</button>
           </form>
         </section>
@@ -217,10 +215,11 @@ export default function DomainManager() {
                 <div className={scan.verified ? 'notice success' : 'notice'} style={{ marginTop: 12 }}>{scan.message}</div>
               )}
               <div className="form-row" style={{ marginTop: 16 }}>
-                <label>DMARC policy</label>
+                <label>DMARC policy (auto-detected)</label>
                 <div className="actions">
-                  <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="none">none</option><option value="quarantine">quarantine</option><option value="reject">reject</option></select>
-                  <button className="secondary" onClick={() => withBusy(async () => setSelected(await updateDmarcPolicy(selected.id, policy)))} disabled={busy} type="button">Save policy</button>
+                  <StatusBadge status={selected.dmarc_verified ? 'VERIFIED' : 'PENDING'} />
+                  <span className="code">p={selected.dmarc_policy || 'none'}</span>
+                  <span className="muted">{selected.dmarc_verified ? 'Read from your published DMARC record.' : 'Will be detected from DNS once your DMARC record is found.'}</span>
                 </div>
               </div>
             </>

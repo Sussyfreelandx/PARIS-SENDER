@@ -93,6 +93,13 @@ class NonSmtpSettings(BaseModel):
     allow_insecure_ssl: bool = True
 
 
+class SmtpTestResult(BaseModel):
+    """Result of an SMTP connection/login test."""
+
+    success: bool
+    detail: str | None = None
+
+
 class SendRequest(BaseModel):
     """Request to send a campaign."""
 
@@ -196,6 +203,7 @@ def create_app(
     repository_factory: Callable[[], LedgerRepository] | None = None,
     provider_factory: Callable[[], DeliveryProvider] | None = None,
     non_smtp_provider_factory: Callable[[], DeliveryProvider] | None = None,
+    smtp_test_factory: Any | None = None,
     deliverability_service: DeliverabilityService | None = None,
     warmup_service: WarmupService | None = None,
     health_service: HealthMonitorService | None = None,
@@ -389,6 +397,28 @@ def create_app(
     def create_campaign(payload: CampaignCreate, repo: LedgerRepository = Depends(get_repository)) -> dict[str, Any]:
         campaign = repo.create_campaign(payload.name)
         return {"id": campaign.id, "name": campaign.name, "created_at": campaign.created_at.isoformat()}
+
+    @app.post("/smtp/test", response_model=SmtpTestResult)
+    def test_smtp(payload: SmtpSettings) -> SmtpTestResult:
+        """Validate SMTP credentials by opening a connection (and authenticating
+        when a username/password is supplied) without sending any mail."""
+        provider = SMTPDeliveryProvider(
+            SMTPConfig(
+                host=payload.host,
+                port=payload.port,
+                username=payload.username,
+                password=payload.password,
+                use_tls=payload.use_tls,
+                use_ssl=payload.use_ssl,
+                timeout=payload.timeout,
+                allow_insecure_ssl=payload.allow_insecure_ssl,
+            ),
+            smtp_factory=smtp_test_factory,
+        )
+        result = provider.verify_connection()
+        if result.success:
+            return SmtpTestResult(success=True, detail="Connected to the SMTP server successfully.")
+        return SmtpTestResult(success=False, detail=result.error or "SMTP connection failed.")
 
     @app.post("/campaigns/{campaign_id}/send")
     def send_campaign(

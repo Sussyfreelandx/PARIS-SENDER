@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { BASE_URL } from '../api/client.js';
+import { useState } from 'react';
+import { BASE_URL, testSmtp } from '../api/client.js';
 
 const SETTINGS_KEY = 'paris_sender_settings';
 
@@ -28,13 +28,43 @@ function readSettings() {
 
 export default function Settings() {
   const [settings, setSettings] = useState(readSettings);
-
-  useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settings]);
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   const setSmtp = (patch) => setSettings((prev) => ({ ...prev, smtp: { ...prev.smtp, ...patch } }));
   const setNonSmtp = (patch) => setSettings((prev) => ({ ...prev, nonSmtp: { ...prev.nonSmtp, ...patch } }));
+
+  // Persist explicitly so the user gets clear "Saved" feedback instead of a
+  // silent background write.
+  function saveSettings() {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 2500);
+  }
+
+  // Validate the SMTP credentials against the backend without sending mail.
+  async function testConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testSmtp({
+        host: settings.smtp.host,
+        port: Number(settings.smtp.port),
+        username: settings.smtp.username || null,
+        password: settings.smtp.password || null,
+        use_tls: settings.smtp.use_tls,
+        use_ssl: settings.smtp.use_ssl
+      });
+      setTestResult(result);
+      // A successful test is a good moment to persist the working config.
+      if (result.success) localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch (err) {
+      setTestResult({ success: false, detail: err.message });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   return (
     <div className="grid two">
@@ -89,6 +119,18 @@ export default function Settings() {
             SSL/TLS
           </label>
         </div>
+        <div className="actions" style={{ marginTop: 14 }}>
+          <button className="primary" type="button" onClick={saveSettings}>Save configuration</button>
+          <button className="secondary" type="button" onClick={testConnection} disabled={testing || !settings.smtp.host}>
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+          {saved && <span className="muted">Saved.</span>}
+        </div>
+        {testResult && (
+          <div className={testResult.success ? 'notice success' : 'notice danger'} style={{ marginTop: 12 }}>
+            {testResult.detail || (testResult.success ? 'Connected successfully.' : 'Connection failed.')}
+          </div>
+        )}
       </section>
 
       <section className="card">
@@ -103,6 +145,10 @@ export default function Settings() {
             <label>HELO/EHLO hostname</label>
             <input value={settings.nonSmtp.helo} onChange={(event) => setNonSmtp({ helo: event.target.value })} placeholder="mail.yourdomain.com" />
           </div>
+        </div>
+        <div className="actions" style={{ marginTop: 14 }}>
+          <button className="primary" type="button" onClick={saveSettings}>Save configuration</button>
+          {saved && <span className="muted">Saved.</span>}
         </div>
       </section>
     </div>

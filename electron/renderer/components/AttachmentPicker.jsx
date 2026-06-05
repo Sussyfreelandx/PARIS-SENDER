@@ -49,9 +49,11 @@ export default function AttachmentPicker() {
           <button className="ghost small" type="button" onClick={clearAll}>Clear all</button>
         )}
       </div>
-      <label className="switch">
+      <p className="muted">Files attached here are included on every outgoing email in the campaign send.</p>
+      <label className="file-drop">
         <input type="file" multiple onChange={onFiles} />
-        <span className="muted">Attach files to outgoing emails</span>
+        <span className="file-drop-cta">Choose files…</span>
+        <span className="muted">or drag &amp; drop here</span>
       </label>
       {error && <div className="notice danger">{error}</div>}
       <div className="list">

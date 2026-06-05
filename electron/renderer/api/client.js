@@ -117,6 +117,7 @@ export const predictCampaign = (id, payload) => post(`/campaigns/${encodeURIComp
 export const sendCampaign = (id, payload) => post(`/campaigns/${encodeURIComponent(id)}/send`, payload);
 export const previewCompose = (payload) => post('/compose/preview', payload);
 export const analyzeCompose = (payload) => post('/compose/analyze', payload);
+export const testSmtp = (payload) => post('/smtp/test', payload);
 export const getDomains = () => get('/domains');
 export const createDomain = (payload) => post('/domains', payload);
 export const getDomain = (id) => get(`/domains/${encodeURIComponent(id)}`);

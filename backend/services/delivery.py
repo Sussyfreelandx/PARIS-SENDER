@@ -143,6 +143,33 @@ class SMTPDeliveryProvider(DeliveryProvider):
                 except Exception:
                     pass
 
+    def verify_connection(self) -> DeliveryResult:
+        """Open an SMTP connection (and authenticate if credentials are set) to
+        validate the configuration, then close it without sending mail.
+
+        Returns a successful result when the relay accepts the connection/login,
+        otherwise a failed result carrying the error message. The connection is
+        always closed, so this never leaves a socket open."""
+        client: SMTPClient | None = None
+        try:
+            context = self._build_ssl_context()
+            client = self.smtp_factory(self.config, context)
+            noop = getattr(client, "noop", None)
+            if callable(noop):
+                try:
+                    noop()
+                except Exception:  # noqa: BLE001 - NOOP support is optional; connect+login already validated
+                    pass
+            return DeliveryResult(success=True, provider_message_id=f"smtp:{self.config.host}:{self.config.port}")
+        except Exception as exc:  # noqa: BLE001 - surface the connection/login error to the UI
+            return DeliveryResult(success=False, error=str(exc))
+        finally:
+            if client is not None:
+                try:
+                    client.quit()
+                except Exception:
+                    pass
+
     def _default_smtp_factory(self, config: SMTPConfig, context: ssl.SSLContext) -> SMTPClient:
         if config.use_ssl:
             client: Any = smtplib.SMTP_SSL(config.host, config.port, timeout=config.timeout, context=context)
