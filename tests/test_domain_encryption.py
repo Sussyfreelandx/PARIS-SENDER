@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from backend.models import Domain, DomainStatus
 from backend.repositories import DomainRepository
+from backend.repositories.domain import _dt_to_text
 from backend.services import DomainService, SecurityService
 
 
@@ -34,7 +35,24 @@ def test_domain_repository_loads_legacy_plaintext_dkim_key() -> None:
                 dmarc_verified, last_checked_at, created_at, updated_at, metadata
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            repo._to_params(legacy)[:3] + ("legacy plaintext",) + repo._to_params(legacy)[4:],
+            (
+                legacy.name,
+                legacy.status.value,
+                legacy.dkim_selector,
+                "legacy plaintext",
+                legacy.dkim_public_key,
+                legacy.spf_record,
+                legacy.dmarc_record,
+                legacy.dmarc_policy,
+                legacy.health_score,
+                int(legacy.dkim_verified),
+                int(legacy.spf_verified),
+                int(legacy.dmarc_verified),
+                None,
+                _dt_to_text(legacy.created_at),
+                _dt_to_text(legacy.updated_at),
+                "{}",
+            ),
         )
 
     fetched = repo.get_by_name("legacy.example")

@@ -84,6 +84,9 @@ def test_direct_mx_reports_missing_mx_records() -> None:
     result = provider.send(OutboundMessage("s@sender.com", "user@example.com", "Hi", "Body"))
     assert result.success is False
     assert "no MX records" in (result.error or "")
+    assert "no_mx_records_found" in (result.error or "")
+    assert result.classification == "PERM_FAIL"
+    assert result.stage == "mx"
 
 
 def test_direct_mx_reports_invalid_recipient() -> None:
@@ -91,6 +94,64 @@ def test_direct_mx_reports_invalid_recipient() -> None:
     result = provider.send(OutboundMessage("s@sender.com", "not-an-email", "Hi", "Body"))
     assert result.success is False
     assert "invalid recipient" in (result.error or "")
+    assert result.classification == "PERM_FAIL"
+    assert result.stage == "recipient"
+
+
+def test_direct_mx_blocked_port_is_classified_and_preserved() -> None:
+    # Every MX host refuses the connection on port 25 (the classic ISP block).
+    def factory(host: str, config: DirectMxConfig, context: ssl.SSLContext):
+        raise ConnectionRefusedError("[Errno 111] Connection refused")
+
+    provider = DirectMxDeliveryProvider(
+        mx_resolver=FakeMxResolver({"example.com": ["mx1.example.com", "mx2.example.com"]}),
+        smtp_factory=factory,
+    )
+    result = provider.send(OutboundMessage("s@sender.com", "user@example.com", "Hi", "Body"))
+
+    assert result.success is False
+    assert result.classification == "BLOCKED"
+    assert result.stage == "connect"
+    assert "connection_blocked_or_rejected" in (result.error or "")
+    # Real per-host reasons are preserved across the whole MX fallback chain:
+    # both attempted hosts are reported (one "MX host" entry each).
+    assert (result.error or "").count("MX host '") == 2
+
+
+def test_direct_mx_permanent_smtp_rejection_is_perm_fail() -> None:
+    import smtplib
+
+    class RejectingSMTP(FakeSMTP):
+        def send_message(self, message: object) -> None:
+            raise smtplib.SMTPResponseException(550, "5.7.1 message rejected")
+
+    provider = DirectMxDeliveryProvider(
+        mx_resolver=FakeMxResolver({"example.com": ["mx1.example.com"]}),
+        smtp_factory=lambda host, config, context: RejectingSMTP(),
+    )
+    result = provider.send(OutboundMessage("s@sender.com", "user@example.com", "Hi", "Body"))
+
+    assert result.success is False
+    assert result.classification == "PERM_FAIL"
+    assert "550" in (result.error or "")
+
+
+def test_direct_mx_temporary_smtp_error_is_temp_fail() -> None:
+    import smtplib
+
+    class GreylistingSMTP(FakeSMTP):
+        def send_message(self, message: object) -> None:
+            raise smtplib.SMTPResponseException(451, "4.7.1 greylisted, try again later")
+
+    provider = DirectMxDeliveryProvider(
+        mx_resolver=FakeMxResolver({"example.com": ["mx1.example.com"]}),
+        smtp_factory=lambda host, config, context: GreylistingSMTP(),
+    )
+    result = provider.send(OutboundMessage("s@sender.com", "user@example.com", "Hi", "Body"))
+
+    assert result.success is False
+    assert result.classification == "TEMP_FAIL"
+    assert "451" in (result.error or "")
 
 
 def _client(repo: LedgerRepository) -> TestClient:

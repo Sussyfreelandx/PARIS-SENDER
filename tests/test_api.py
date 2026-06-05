@@ -17,7 +17,9 @@ def test_api_create_send_status_and_health():
 
     health = client.get("/health")
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    health_body = health.json()
+    assert health_body["status"] == "ok"
+    assert "version" in health_body
 
     created = client.post("/campaigns", json={"name": "API Campaign"})
     assert created.status_code == 201

@@ -41,10 +41,12 @@ class FakeResolver:
         *,
         nameservers: list[str] | None = None,
         mx: dict[str, list[str]] | None = None,
+        a: dict[str, list[str]] | None = None,
     ) -> None:
         self.records = records or {}
         self.nameservers = nameservers or []
         self.mx = mx or {}
+        self.a = a or {}
         self.hosts: list[str] = []
 
     def resolve_txt(self, host: str) -> list[str]:
@@ -56,6 +58,9 @@ class FakeResolver:
 
     def resolve_mx(self, domain: str) -> list[str]:
         return list(self.mx.get(domain, []))
+
+    def resolve_a(self, host: str) -> list[str]:
+        return list(self.a.get(host, []))
 
 
 class FixedClock:
