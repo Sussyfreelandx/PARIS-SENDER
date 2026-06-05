@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getHealth, getHealthWithRetry } from './api/client.js';
+import { useMemo, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import Badge from './components/Badge.jsx';
 import LoadingScreen from './components/LoadingScreen.jsx';
+import UpdateBanner from './components/UpdateBanner.jsx';
+import RuntimeStatusBar from './components/RuntimeStatusBar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import CampaignManager from './pages/CampaignManager.jsx';
 import ComposeEditor from './pages/ComposeEditor.jsx';
@@ -15,72 +16,43 @@ import Deliverability from './pages/Deliverability.jsx';
 import Warmup from './pages/Warmup.jsx';
 import HealthMonitor from './pages/HealthMonitor.jsx';
 import ServerLogs from './pages/ServerLogs.jsx';
+import Diagnostics from './pages/Diagnostics.jsx';
+import useBackendLifecycle from './hooks/useBackendLifecycle.js';
+import useUpdateStatus from './hooks/useUpdateStatus.js';
+import { connectionHints, connectionLabel, connectionTone, deriveDeliveryStatus } from './lib/runtimeStatus.js';
 
-const screens = ['Dashboard', 'Campaigns', 'Compose', 'Contacts', 'Analytics', 'Settings', 'Logs', 'Backend Logs', 'Domains', 'Deliverability', 'Warmup', 'Health'];
+const screens = ['Dashboard', 'Campaigns', 'Compose', 'Contacts', 'Analytics', 'Settings', 'Logs', 'Backend Logs', 'Domains', 'Deliverability', 'Warmup', 'Health', 'Diagnostics'];
 
 export default function App() {
   const [active, setActive] = useState('Dashboard');
-  // Backend connection state machine: starting -> connecting -> online | offline.
-  const [connection, setConnection] = useState('starting');
-  const [health, setHealth] = useState({ status: 'starting' });
-  const [connError, setConnError] = useState(null);
-  const cancelledRef = useRef(false);
 
-  // Drive the startup handshake: retry /health silently (up to 30s) and only
-  // transition to "offline" once every attempt has failed. The main UI stays
-  // hidden behind the connecting screen until we reach "online", so a transient
-  // "Failed to fetch" during boot never flashes an error to the user.
-  const connect = useCallback(async () => {
-    cancelledRef.current = false;
-    setConnError(null);
-    setConnection('connecting');
-    setHealth({ status: 'connecting' });
-    try {
-      const result = await getHealthWithRetry({
-        attempts: 30,
-        intervalMs: 1000,
-        onRetry: () => {
-          if (!cancelledRef.current) setConnection('connecting');
-        }
-      });
-      if (cancelledRef.current) return;
-      setHealth(result);
-      setConnection('online');
-    } catch (error) {
-      if (cancelledRef.current) return;
-      setConnError(error.message);
-      setHealth({ status: 'offline', error: error.message });
-      setConnection('offline');
-    }
-  }, []);
+  // Resilient, non-binary backend lifecycle:
+  // starting -> connecting -> healthy -> degraded -> offline (with recovery).
+  const { phase, backend, diagnostics, showHints, everConnected, retry } = useBackendLifecycle();
 
-  useEffect(() => {
-    connect();
-    return () => {
-      cancelledRef.current = true;
-    };
-  }, [connect]);
+  // Centralized, reactive auto-update status that ties the version display to
+  // the update system (current/latest version, availability, channel).
+  const update = useUpdateStatus();
 
-  // Steady-state polling, only after the initial handshake succeeds. A single
-  // transient failure here updates the status badge but does NOT tear the app
-  // back down to the connecting screen.
-  useEffect(() => {
-    if (connection !== 'online') return undefined;
-    let cancelled = false;
-    async function pollHealth() {
-      try {
-        const result = await getHealth();
-        if (!cancelled) setHealth(result);
-      } catch (error) {
-        if (!cancelled) setHealth({ status: 'offline', error: error.message });
-      }
-    }
-    const timer = window.setInterval(pollHealth, 30000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [connection]);
+  // Central runtime status object: the single source of truth consumed by the
+  // UI. Every value is a real probe result — no fabricated states.
+  const runtime = useMemo(() => ({
+    backend: { ...backend, phase },
+    update: {
+      current_version: update.current_version,
+      latest_version: update.latest_version,
+      update_available: update.update_available,
+      update_channel: update.update_channel,
+      state: update.state,
+      error: update.error,
+      status: update.status
+    },
+    database: diagnostics
+      ? { ok: diagnostics.database ? Boolean(diagnostics.database.ok) : null, error: diagnostics.database?.error || null }
+      : { ok: null, error: null },
+    delivery: deriveDeliveryStatus(diagnostics),
+    diagnosticsError: diagnostics?._error || null
+  }), [backend, phase, update, diagnostics]);
 
   const page = useMemo(() => {
     switch (active) {
@@ -95,24 +67,30 @@ export default function App() {
       case 'Deliverability': return <Deliverability />;
       case 'Warmup': return <Warmup />;
       case 'Health': return <HealthMonitor />;
+      case 'Diagnostics': return <Diagnostics />;
       default: return <Dashboard onNavigate={setActive} />;
     }
   }, [active]);
 
-  const healthTone = health.status === 'ok' || health.status === 'healthy'
-    ? 'success'
-    : health.status === 'checking' || health.status === 'starting' || health.status === 'connecting'
-      ? 'warning'
-      : 'danger';
-  const healthLabel = health.status === 'connecting' || health.status === 'starting'
-    ? 'Starting backend...'
-    : `Backend: ${health.status}`;
-
-  // Keep the main UI hidden until the backend handshake resolves. This is the
-  // dedicated "Connecting..." screen that prevents any error flicker on launch.
-  if (connection !== 'online') {
-    return <LoadingScreen state={connection} error={connError} onRetry={connect} />;
+  // Keep the main UI hidden during the initial handshake (and while offline if
+  // we never connected). Once the backend has connected at least once we keep
+  // the app mounted and surface degraded/offline via the runtime status bar so
+  // a transient blip never tears the whole UI down to the boot screen.
+  const blockingBoot = phase === 'starting' || phase === 'connecting' || (phase === 'offline' && !everConnected);
+  if (blockingBoot) {
+    return (
+      <LoadingScreen
+        state={phase === 'offline' ? 'offline' : 'connecting'}
+        error={backend.error}
+        classification={backend.classification}
+        hints={connectionHints(backend.classification)}
+        showHints={showHints}
+        onRetry={retry}
+      />
+    );
   }
+
+  const versionLabel = `v${update.current_version || '0.2.0'}`;
 
   return (
     <div className="app-shell">
@@ -124,11 +102,25 @@ export default function App() {
             <h1>{active}</h1>
           </div>
           <div className="topbar-actions">
-            <Badge tone={healthTone}>{healthLabel}</Badge>
-            <span className="muted">v{window.parisAPI?.appVersion || '0.2.0'}</span>
+            <Badge tone={connectionTone(backend.status)}>Backend: {connectionLabel(backend.status)}</Badge>
+            <span className="muted">{versionLabel}</span>
+            {update.update_available && (
+              <Badge tone="warning">Update v{update.latest_version || '?'} available</Badge>
+            )}
           </div>
         </header>
-        {health.error && <div className="notice danger">Backend health check failed: {health.error}</div>}
+        <RuntimeStatusBar runtime={runtime} />
+        {backend.status === 'degraded' && (
+          <div className="notice warning">
+            Backend degraded: {backend.error || 'recent health checks failed'} ({backend.consecutiveFailures} consecutive failure(s)). Retrying…
+          </div>
+        )}
+        {backend.status === 'offline' && (
+          <div className="notice danger">
+            Backend offline: {backend.error || 'health checks are failing'}. The app will recover automatically when the backend responds.
+          </div>
+        )}
+        <UpdateBanner status={update.status} onInstall={update.install} />
         {page}
       </main>
     </div>

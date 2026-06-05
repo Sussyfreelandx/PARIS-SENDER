@@ -110,3 +110,52 @@ button.small { padding: 7px 10px; font-size: 12px; }
 .boot-message { margin: 0; color: #cbd5e1; font-size: 15px; }
 .boot-error { color: #fecaca; font-weight: 700; }
 .boot-detail { margin: 0; font-size: 13px; word-break: break-word; }
+.boot-hints { width: 100%; text-align: left; border-top: 1px solid rgba(148, 163, 184, .18); padding-top: 14px; margin-top: 2px; }
+.boot-hints-title { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #94a3b8; }
+.boot-hints ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.boot-hints li { display: flex; flex-direction: column; gap: 2px; }
+.boot-hints li strong { font-size: 13px; color: #e2e8f0; }
+.boot-hints li span { font-size: 12px; color: #94a3b8; }
+
+/* Central runtime status bar */
+.runtime-bar { margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+.runtime-chips { display: flex; flex-wrap: wrap; gap: 14px; }
+.runtime-chip { display: inline-flex; align-items: center; gap: 6px; }
+.runtime-chip-label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #94a3b8; }
+.runtime-issues { font-size: 13px; }
+.runtime-issues summary { cursor: pointer; color: #fecaca; }
+.runtime-issues ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; color: #cbd5e1; }
+
+/* Auto-update banner + diagnostics panel (Part 1 / Part 5) */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.update-banner .primary {
+  white-space: nowrap;
+}
+.update-notes {
+  margin-top: 0.5rem;
+}
+.update-notes pre {
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0;
+}
+.diag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.diag-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}

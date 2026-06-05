@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { createCampaign, deleteCampaign, getCampaign, getDomains, sendCampaign } from '../api/client.js';
+import { createCampaign, deleteCampaign, getCampaign, getCampaignMessages, getDomains, sendCampaign } from '../api/client.js';
 import { StatusBadge } from '../components/Badge.jsx';
 import HealthBars from '../components/HealthBars.jsx';
 import { readAttachments, subscribeAttachments, toApiAttachments } from '../api/attachments.js';
@@ -52,6 +52,7 @@ export default function CampaignManager() {
   const [nonSmtpDelivery, setNonSmtpDelivery] = useState(() => Boolean(readJson(SETTINGS_KEY, {}).nonSmtpDefault));
   const [attachments, setAttachments] = useState(readAttachments);
   const [result, setResult] = useState(null);
+  const [messages, setMessages] = useState(null);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -62,22 +63,25 @@ export default function CampaignManager() {
     () => recipientsText.split(/[\s,;]+/).map((value) => value.trim()).filter((value) => value && !EMAIL_RE.test(value)).length,
     [recipientsText]
   );
-  const verifiedDomains = useMemo(() => domains.filter((domain) => domain.is_verified), [domains]);
+  // A domain may only be used to send when BOTH DNS and provider verification
+  // pass — the backend exposes this as sending_enabled.
+  const verifiedDomains = useMemo(() => domains.filter((domain) => domain.sending_enabled), [domains]);
   const sender = domainName ? `${localPart || 'noreply'}@${domainName}` : '';
 
   useEffect(() => {
     async function loadDomains() {
       const data = await getDomains();
       setDomains(data.domains || []);
-      const firstVerified = (data.domains || []).find((domain) => domain.is_verified);
+      const firstVerified = (data.domains || []).find((domain) => domain.sending_enabled);
       setDomainName((current) => current || firstVerified?.name || '');
     }
     loadDomains().catch((err) => setError(err.message));
   }, []);
 
   useEffect(() => {
-    if (!selectedId) { setSelectedCampaign(null); return; }
+    if (!selectedId) { setSelectedCampaign(null); setMessages(null); return; }
     getCampaign(selectedId).then(setSelectedCampaign).catch((err) => setError(err.message));
+    getCampaignMessages(selectedId).then(setMessages).catch(() => setMessages(null));
   }, [selectedId]);
 
   async function onCreate(event) {
@@ -167,6 +171,8 @@ export default function CampaignManager() {
       setResult(response);
       const fresh = await getCampaign(selectedId);
       setSelectedCampaign(fresh);
+      const freshMessages = await getCampaignMessages(selectedId).catch(() => null);
+      if (freshMessages) setMessages(freshMessages);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -257,15 +263,58 @@ export default function CampaignManager() {
             {disabledReasons.map((reason) => <li key={reason}>{reason}</li>)}
           </ul>
         )}
-        {result && <pre className="code">{JSON.stringify(result, null, 2)}</pre>}
+        {result && (
+          <div className="send-result">
+            <div className="actions" style={{ marginTop: 14 }}>
+              <StatusBadge status={result.failed > 0 ? (result.sent > 0 ? 'partial' : 'failed') : 'sent'} />
+              <span className="muted">Sent {result.sent} · Failed {result.failed} · Channel {result.delivery_channel}</span>
+            </div>
+            {Array.isArray(result.failures) && result.failures.length > 0 && (
+              <div className="notice danger" style={{ marginTop: 12 }}>
+                <strong>Delivery failures (real provider reasons):</strong>
+                <ul className="send-reasons">
+                  {result.failures.map((failure) => (
+                    <li key={failure.message_id}><code>{failure.recipient}</code> — {failure.error}{failure.attempts > 1 ? ` (after ${failure.attempts} attempts)` : ''}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
         {error && <div className="notice danger">{error}</div>}
       </section>
+
+      {messages && messages.messages.length > 0 && (
+        <section className="card">
+          <div className="card-header">
+            <h2>Delivery status ({messages.messages.length})</h2>
+            {messages.failed_count > 0 && <StatusBadge status="failed" />}
+          </div>
+          {messages.failed_count > 0 && (
+            <p className="muted">{messages.failed_count} message(s) in the dead-letter set. Only messages a provider actually accepted are marked SENT.</p>
+          )}
+          <table className="table">
+            <thead>
+              <tr><th>Recipient</th><th>Status</th><th>Reason / Provider ID</th></tr>
+            </thead>
+            <tbody>
+              {messages.messages.map((message) => (
+                <tr key={message.message_id}>
+                  <td>{message.recipient}</td>
+                  <td><StatusBadge status={message.status.toLowerCase()} /></td>
+                  <td className="muted">{message.error || message.provider_message_id || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <section className="card">
         <h2>Verified sender domains</h2>
         <div className="list">
           {verifiedDomains.map((domain) => <div className="list-item" key={domain.id}><strong>{domain.name}</strong><p className="muted">Health score {domain.health_score ?? 'n/a'}</p></div>)}
-          {verifiedDomains.length === 0 && <p className="muted">Only domains with is_verified=true appear here.</p>}
+          {verifiedDomains.length === 0 && <p className="muted">Only domains with sending_enabled=true (DNS verified and provider confirmed) appear here.</p>}
         </div>
       </section>
     </div>

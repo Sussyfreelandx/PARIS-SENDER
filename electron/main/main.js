@@ -8,6 +8,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
+let mainWindowRef = null;
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -56,6 +58,13 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  mainWindowRef = mainWindow;
+  mainWindow.on('closed', () => {
+    if (mainWindowRef === mainWindow) {
+      mainWindowRef = null;
+    }
+  });
 }
 
 app.whenReady().then(async () => {
@@ -70,11 +79,11 @@ app.whenReady().then(async () => {
     return;
   }
 
-  if (!isDev) {
-    initAutoUpdate();
-  }
-
   createWindow();
+
+  // Always wire IPC (renderer can query status/channel); the real updater only
+  // activates for packaged builds.
+  initAutoUpdate(() => mainWindowRef);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
