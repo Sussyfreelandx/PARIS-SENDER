@@ -21,36 +21,22 @@ from __future__ import annotations
 
 import os
 
-from fastapi.middleware.cors import CORSMiddleware
-
 from backend.api import create_app
+from backend.api.app import DEFAULT_CORS_ORIGINS
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 
 # Origins used by the Electron renderer. ``null`` covers pages loaded from
 # ``file://`` in the packaged app; the localhost entries cover the Vite dev
-# server during development.
-_LOCAL_ORIGINS = [
-    "null",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
+# server during development. CORS is now applied centrally by ``create_app``;
+# this list is retained for backward compatibility.
+_LOCAL_ORIGINS = DEFAULT_CORS_ORIGINS
 
 
 def build_app():
     """Build the desktop FastAPI app with CORS enabled for local origins."""
-    app = create_app()
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_LOCAL_ORIGINS,
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    return app
+    return create_app(enable_cors=True, cors_origins=_LOCAL_ORIGINS)
 
 
 # Importable target for ``uvicorn backend.server:app`` and PyInstaller.

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -32,6 +33,22 @@ from backend.validators import AutograbService
 from backend.validators.compose import analyze_compose
 
 from backend.api.security import AuthMiddleware, RateLimitMiddleware
+
+
+# Origins used by the local desktop UI. ``null`` covers pages loaded from
+# ``file://`` in the packaged Electron app; the localhost/127.0.0.1 entries
+# cover the Vite dev server (5173) and direct access to the backend (8000).
+# CORS is enabled by default so every entrypoint (``run_backend.py`` in
+# development, the packaged ``backend.server`` binary, and tests) consistently
+# allows the renderer to reach the API. Without this, the browser blocks the
+# cross-origin request and the UI shows "Failed to fetch".
+DEFAULT_CORS_ORIGINS = [
+    "null",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
 
 
 class CampaignCreate(BaseModel):
@@ -155,9 +172,19 @@ def create_app(
     jwt_secret: str | None = None,
     rate_limit_requests: int = 60,
     rate_limit_window_seconds: int = 60,
+    enable_cors: bool = True,
+    cors_origins: list[str] | None = None,
 ) -> FastAPI:
     """Create a FastAPI app with injectable services and opt-in security controls."""
     app = FastAPI(title="Paris Sender Backend")
+    if enable_cors:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins if cors_origins is not None else DEFAULT_CORS_ORIGINS,
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     if enable_rate_limit:
         app.add_middleware(
             RateLimitMiddleware,
