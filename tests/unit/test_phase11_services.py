@@ -171,9 +171,24 @@ def test_domain_records_and_dns_validation_paths(domain_service, fake_resolver):
     assert "include:spf.mailer.test" in spf.value
     assert "p=quarantine" in dmarc.value
 
-    fake_resolver.records = {dkim.host: ["v=DKIM1; k=rsa; p=wrong"], domain.name: ["v=spf1 mx ~all"], f"_dmarc.{domain.name}": [dmarc.value]}
+    # DKIM is now detected by the *existence* of a published record at the
+    # selector (the user's own provider key), not by matching this app's generated
+    # key — so the negative case is "no DKIM record published at any selector".
+    fake_resolver.records = {domain.name: ["v=spf1 mx ~all"], f"_dmarc.{domain.name}": [dmarc.value]}
     failed = domain_service.verify_domain(domain.id)
     assert failed.dkim_verified is False
     assert failed.spf_verified is True
     assert failed.dmarc_verified is True
     assert failed.health_score == 60
+
+    # Publishing any valid DKIM record at the selector verifies DKIM and the
+    # DMARC policy is read back from the published record.
+    fake_resolver.records = {
+        dkim.host: ["v=DKIM1; k=rsa; p=anykeydata"],
+        domain.name: ["v=spf1 mx ~all"],
+        f"_dmarc.{domain.name}": ["v=DMARC1; p=reject; rua=mailto:dmarc@example.com"],
+    }
+    passed = domain_service.verify_domain(domain.id)
+    assert passed.dkim_verified is True
+    assert passed.dmarc_policy == "reject"
+    assert passed.health_score == 100

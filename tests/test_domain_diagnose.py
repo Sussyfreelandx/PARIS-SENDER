@@ -66,20 +66,22 @@ def test_diagnose_domain_reports_failing_dkim_and_dmarc_with_hints() -> None:
     assert report["verified_count"] == 1
 
 
-def test_diagnose_domain_detects_dkim_key_mismatch() -> None:
+def test_diagnose_domain_detects_existing_dkim_regardless_of_key() -> None:
+    # DKIM is detected by the existence of a valid published record at the
+    # selector — the user's own provider key — not by matching this app's
+    # generated key. So any valid DKIM record verifies.
     domains = _service(FakeResolver())
     domain = domains.add_domain("example.com")
     records = {r.host: [r.value] for r in domains.required_records(domain)}
-    # Corrupt the DKIM record so the v=DKIM1 marker is present but the key differs.
     dkim_host = next(r.host for r in domains.required_records(domain) if r.record_type is RecordType.DKIM)
-    records[dkim_host] = ["v=DKIM1; k=rsa; p=WRONGKEYDATA"]
+    records[dkim_host] = ["v=DKIM1; k=rsa; p=SOMEOTHERPROVIDERKEYDATA"]
     domains.resolver.records = records
 
     report = domains.diagnose_domain(domain.id)
     by_type = {record["record_type"]: record for record in report["records"]}
     dkim = by_type[RecordType.DKIM.value]
-    assert dkim["verified"] is False
-    assert "key" in dkim["hint"].lower()
+    assert dkim["verified"] is True
+    assert dkim["detected_selector"] == domain.dkim_selector
 
 
 def _diagnose_client() -> tuple[TestClient, int]:
