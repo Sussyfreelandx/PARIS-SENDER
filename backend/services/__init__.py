@@ -2,6 +2,9 @@
 
 from backend.services.deliverability import DeliverabilityService
 from backend.services.delivery import (
+    BLOCKED,
+    PERM_FAIL,
+    TEMP_FAIL,
     DeliveryProvider,
     DeliveryResult,
     DeliveryService,
@@ -31,6 +34,7 @@ from backend.services.warmup import WarmupDecision, WarmupService, start_warmup_
 
 __all__ = [
     "Attachment",
+    "BLOCKED",
     "DeliverabilityService",
     "DeliveryProvider",
     "DeliveryResult",
@@ -44,11 +48,13 @@ __all__ = [
     "LoggingService",
     "NonSmtpDeliveryProvider",
     "OutboundMessage",
+    "PERM_FAIL",
     "SMTPConfig",
     "SMTPDeliveryProvider",
     "SecurityService",
     "ServerProbe",
     "SmtplibProbe",
+    "TEMP_FAIL",
     "WarmupDecision",
     "WarmupService",
     "build_dkim_record",

@@ -202,6 +202,45 @@ class LedgerRepository:
         rows = self.connection.execute("SELECT * FROM messages WHERE campaign_id = ? ORDER BY id", (campaign_id,)).fetchall()
         return [self._message_from_row(row) for row in rows]
 
+    def latest_error_for_message(self, message_id: int) -> str | None:
+        """Return the most recent non-empty error recorded for a message, if any."""
+        row = self.connection.execute(
+            "SELECT error FROM events WHERE message_id = ? AND error IS NOT NULL AND error != '' "
+            "ORDER BY id DESC LIMIT 1",
+            (message_id,),
+        ).fetchone()
+        return row["error"] if row else None
+
+    def list_message_statuses(self, campaign_id: int) -> list[dict[str, Any]]:
+        """Return per-message delivery status for a campaign, including the
+        recipient address, current status, provider message id, and the latest
+        recorded error. This is the end-to-end observability/dead-letter view the
+        UI uses to show *why* a message failed instead of an opaque count."""
+        rows = self.connection.execute(
+            """
+            SELECT m.id AS message_id, m.status AS status, m.provider_message_id AS provider_message_id,
+                   m.updated_at AS updated_at, r.email AS recipient
+            FROM messages m
+            JOIN recipients r ON r.id = m.recipient_id
+            WHERE m.campaign_id = ?
+            ORDER BY m.id
+            """,
+            (campaign_id,),
+        ).fetchall()
+        statuses: list[dict[str, Any]] = []
+        for row in rows:
+            statuses.append(
+                {
+                    "message_id": row["message_id"],
+                    "recipient": row["recipient"],
+                    "status": row["status"],
+                    "provider_message_id": row["provider_message_id"],
+                    "updated_at": row["updated_at"],
+                    "error": self.latest_error_for_message(row["message_id"]),
+                }
+            )
+        return statuses
+
     def record_event(self, event: Event) -> Event:
         """Persist an event and update message/recipient status rollups."""
         message = self.get_message(event.message_id)

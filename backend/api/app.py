@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -38,6 +39,7 @@ from backend.validators import AutograbService
 from backend.validators.compose import analyze_compose
 
 from backend.api.security import AuthMiddleware, RateLimitMiddleware
+from backend.version import BACKEND_VERSION
 
 
 # Origins used by the local desktop UI. ``null`` covers pages loaded from
@@ -221,6 +223,9 @@ def create_app(
     rate_limit_window_seconds: int = 60,
     enable_cors: bool = True,
     cors_origins: list[str] | None = None,
+    delivery_max_attempts: int = 3,
+    delivery_backoff_base: float = 0.5,
+    delivery_backoff_factor: float = 2.0,
 ) -> FastAPI:
     """Create a FastAPI app with injectable services and opt-in security controls."""
     app = FastAPI(title="Paris Sender Backend")
@@ -355,7 +360,56 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "version": BACKEND_VERSION}
+
+    @app.get("/version")
+    def version() -> dict[str, str]:
+        return {"version": BACKEND_VERSION}
+
+    @app.get("/diagnostics")
+    def diagnostics(
+        health_monitor: HealthMonitorService = Depends(get_health_service),
+        logger: LoggingService = Depends(get_logging_service),
+        repository: LedgerRepository = Depends(get_repository),
+    ) -> dict[str, Any]:
+        """Aggregate observability snapshot for the desktop diagnostics panel.
+
+        Combines the backend version, database reachability, the live health
+        snapshot (delivery/DNS/server probes) and the most recent error from the
+        structured log so the UI can render a single source of truth without
+        fabricating any status.
+        """
+        database_ok = True
+        database_error: str | None = None
+        try:
+            repository.list_campaigns()
+        except Exception:  # pragma: no cover - defensive
+            database_ok = False
+            # Avoid leaking internal exception/stack detail to the client; the
+            # full detail is captured in the structured server log instead.
+            database_error = "database probe failed"
+            logger.error(LogComponent.API, "diagnostics database probe failed", details=traceback.format_exc())
+
+        try:
+            health_snapshot = health_monitor.snapshot()
+        except Exception:  # pragma: no cover - defensive
+            health_snapshot = {"error": "health snapshot unavailable"}
+            logger.error(LogComponent.API, "diagnostics health snapshot failed", details=traceback.format_exc())
+
+        last_error: dict[str, Any] | None = None
+        try:
+            recent = logger.query(severity=LogSeverity.ERROR.value, limit=1)
+            if recent:
+                last_error = recent[0]
+        except Exception:  # pragma: no cover - defensive
+            last_error = None
+
+        return {
+            "backend_version": BACKEND_VERSION,
+            "database": {"ok": database_ok, "error": database_error},
+            "health": health_snapshot,
+            "last_error": last_error,
+        }
 
     @app.get("/health/status")
     def health_status(health_monitor: HealthMonitorService = Depends(get_health_service)) -> dict[str, Any]:
@@ -532,7 +586,14 @@ def create_app(
             smtp_provider=delivery_provider,
             non_smtp_provider=non_smtp_delivery_provider,
         )
-        service = DeliveryService(repo, selected_provider, logger=logger)
+        service = DeliveryService(
+            repo,
+            selected_provider,
+            logger=logger,
+            max_attempts=delivery_max_attempts,
+            backoff_base=delivery_backoff_base,
+            backoff_factor=delivery_backoff_factor,
+        )
         receipts = service.send_campaign(
             campaign,
             payload.recipients,
@@ -547,6 +608,20 @@ def create_app(
             warmup.record_execution(sender_domain, campaign_id, len(receipts))
         sent = sum(1 for receipt in receipts if receipt.result.success)
         failed = sum(1 for receipt in receipts if not receipt.result.success)
+        # Surface the real, provider-sourced reason for every failure so the UI
+        # never has to show an opaque "failed" with no explanation.
+        failures = [
+            {
+                "message_id": receipt.message.id,
+                "recipient": receipt.recipient.email,
+                "error": receipt.result.error or "delivery failed (no provider detail)",
+                "attempts": receipt.attempts,
+                "classification": receipt.result.classification,
+                "stage": receipt.result.stage,
+            }
+            for receipt in receipts
+            if not receipt.result.success
+        ]
         logger.log(
             LogComponent.CAMPAIGN,
             LogSeverity.ERROR if failed else LogSeverity.INFO,
@@ -563,6 +638,7 @@ def create_app(
             "sent": sent,
             "failed": failed,
             "messages": [receipt.message.id for receipt in receipts],
+            "failures": failures,
             "delivery_channel": delivery_channel,
         }
 
@@ -607,6 +683,26 @@ def create_app(
             "id": campaign.id,
             "name": campaign.name,
             "status_rollups": {status.value: rollups.get(status, 0) for status in Status},
+        }
+
+    @app.get("/campaigns/{campaign_id}/messages")
+    def list_campaign_messages(campaign_id: int, repo: LedgerRepository = Depends(get_repository)) -> dict[str, Any]:
+        """Per-message delivery status with the real, latest provider error.
+
+        This is the end-to-end observability view: every message's current
+        status, provider message id, and (for failures) the precise reason
+        recorded in the ledger. Messages with status FAILED are the inspectable
+        dead-letter set."""
+        campaign = repo.get_campaign(campaign_id)
+        if campaign is None:
+            raise HTTPException(status_code=404, detail="campaign not found")
+        messages = repo.list_message_statuses(campaign_id)
+        failed = [m for m in messages if m["status"] == Status.FAILED.value]
+        return {
+            "campaign_id": campaign_id,
+            "messages": messages,
+            "failed_count": len(failed),
+            "dead_letter": failed,
         }
 
     @app.delete("/campaigns/{campaign_id}")
@@ -734,6 +830,15 @@ def create_app(
     def diagnose_domain(domain_id: int, domains: DomainService = Depends(get_domain_service)) -> dict[str, Any]:
         try:
             return domains.diagnose_domain(domain_id)
+        except DomainError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/domains/{domain_id}/verify/live")
+    def live_verify_domain(domain_id: int, domains: DomainService = Depends(get_domain_service)) -> dict[str, Any]:
+        """Live-DNS verification report (dns_resolves/ns/mx/spf/dkim/dmarc,
+        provider_detected, verification_source=live_dns). No placeholder states."""
+        try:
+            return domains.live_verification_report(domain_id)
         except DomainError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

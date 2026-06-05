@@ -62,6 +62,11 @@ class Domain:
     dkim_verified: bool = False
     spf_verified: bool = False
     dmarc_verified: bool = False
+    provider_name: str | None = None
+    provider_verified: bool = False
+    provider_domain_id: str | None = None
+    provider_status: str | None = None
+    provider_last_checked: datetime | None = None
     last_checked_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -71,6 +76,21 @@ class Domain:
     def is_verified(self) -> bool:
         """A domain is verified once every required record passes DNS checks."""
         return self.status is DomainStatus.VERIFIED
+
+    @property
+    def sending_enabled(self) -> bool:
+        """Eligibility to send mail.
+
+        DNS authentication (SPF/DKIM/DMARC) and provider verification are tracked
+        separately; a domain may send only when every DNS record is valid *and*
+        the upstream provider has independently verified it.
+        """
+        return (
+            self.spf_verified
+            and self.dkim_verified
+            and self.dmarc_verified
+            and self.provider_verified
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the domain to a JSON-friendly dict for the API/UI."""
@@ -87,6 +107,12 @@ class Domain:
             "dkim_verified": self.dkim_verified,
             "spf_verified": self.spf_verified,
             "dmarc_verified": self.dmarc_verified,
+            "provider_name": self.provider_name,
+            "provider_verified": self.provider_verified,
+            "provider_domain_id": self.provider_domain_id,
+            "provider_status": self.provider_status,
+            "provider_last_checked": self.provider_last_checked.isoformat() if self.provider_last_checked else None,
+            "sending_enabled": self.sending_enabled,
             "is_verified": self.is_verified,
             "last_checked_at": self.last_checked_at.isoformat() if self.last_checked_at else None,
             "created_at": self.created_at.isoformat(),

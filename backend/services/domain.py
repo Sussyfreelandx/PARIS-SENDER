@@ -130,6 +130,36 @@ class DnspythonResolver:
                 servers.append(target)
         return servers
 
+    def resolve_a(self, host: str) -> list[str]:
+        """Return the A/AAAA addresses published for ``host`` (live DNS)."""
+        import dns.resolver  # imported lazily so the dependency is optional in tests
+
+        addresses: list[str] = []
+        for record_type in ("A", "AAAA"):
+            try:
+                answers = dns.resolver.resolve(host, record_type, lifetime=_DNS_QUERY_TIMEOUT)
+            except Exception:
+                continue
+            for rdata in answers:
+                value = str(getattr(rdata, "address", rdata)).strip()
+                if value:
+                    addresses.append(value)
+        return addresses
+
+    def resolve_mx(self, host: str) -> list[str]:
+        """Return the mail exchangers for ``host``, best preference first (live DNS)."""
+        import dns.resolver  # imported lazily so the dependency is optional in tests
+
+        try:
+            answers = dns.resolver.resolve(host, "MX", lifetime=_DNS_QUERY_TIMEOUT)
+        except Exception:
+            return []
+        hosts = sorted(
+            ((int(getattr(r, "preference", 0)), str(getattr(r, "exchange", r)).rstrip(".").lower()) for r in answers),
+            key=lambda item: item[0],
+        )
+        return [host for _, host in hosts if host]
+
 
 # Ordered (most specific first) signatures mapping a name-server substring to the
 # DNS provider that operates it. Used to detect where a domain's DNS is hosted so
@@ -564,6 +594,92 @@ class DomainService:
                 wait(bounded_interval)
             domain = self.verify_domain(domain_id)
         return domain
+
+    def _resolve_optional(self, method: str, host: str) -> list[str]:
+        """Call an optional resolver method (resolve_a/resolve_mx/resolve_ns) safely.
+
+        Returns an empty list if the resolver does not implement the method or the
+        lookup raises, so a single missing record type never aborts the report."""
+        func = getattr(self.resolver, method, None)
+        if not callable(func):
+            return []
+        try:
+            return list(func(host))
+        except Exception:  # noqa: BLE001 - a failed optional lookup is reported as "absent"
+            return []
+
+    def live_verification_report(self, domain_id: int) -> dict[str, object]:
+        """Produce a live-DNS verification report in the audited result shape.
+
+        Every field is derived from a real DNS lookup (no placeholder/mock
+        states): the domain's A/AAAA, NS, and MX records are resolved live, and
+        SPF/DKIM/DMARC are re-verified (persisting the refreshed status). DKIM is
+        probed across the configured selector plus common provider selectors and
+        stops at the first match. Failing checks include a precise explanation.
+        """
+        # Re-run the authoritative checks so SPF/DKIM/DMARC reflect live DNS now.
+        domain = self.verify_domain(domain_id)
+        name = domain.name
+
+        a_records = self._resolve_optional("resolve_a", name)
+        ns_records = self._resolve_optional("resolve_ns", name)
+        mx_records = self._resolve_optional("resolve_mx", name)
+
+        a_present = bool(a_records)
+        ns_present = bool(ns_records)
+        mx_present = bool(mx_records)
+        # A domain "resolves" if it exists in DNS at all -- delegated zones always
+        # publish NS, mail domains publish MX, and most publish A. Any of these is
+        # sufficient proof the zone is live.
+        dns_resolves = a_present or ns_present or mx_present
+
+        provider = detect_dns_provider(name, self.resolver)
+
+        errors: dict[str, str] = {}
+        if not dns_resolves:
+            errors["dns_resolves"] = f"No A/AAAA, NS, or MX records found for '{name}'; the domain does not resolve."
+        if not mx_present:
+            errors["mx_present"] = f"No MX records published for '{name}'; mail cannot be delivered to this domain."
+        if not domain.spf_verified:
+            errors["spf_valid"] = "No valid SPF (v=spf1) TXT record found at the domain root."
+        if not domain.dkim_verified:
+            errors["dkim_valid"] = "No valid DKIM record found at the configured or any common provider selector."
+        if not domain.dmarc_verified:
+            errors["dmarc_valid"] = "No valid DMARC (v=DMARC1) TXT record found at _dmarc."
+
+        timestamp = (domain.last_checked_at or datetime.now(timezone.utc)).isoformat()
+        detected = provider.provider if provider.provider != "Unknown" else None
+
+        # Authentication strength derived purely from the live SPF/DKIM/DMARC
+        # checks above: "strong" only when all three authenticate, "failed" when
+        # none do, "partial" in between. No record is ever assumed without DNS.
+        auth_valid = sum((domain.spf_verified, domain.dkim_verified, domain.dmarc_verified))
+        if auth_valid == 3:
+            verification_strength = "strong"
+        elif auth_valid == 0:
+            verification_strength = "failed"
+        else:
+            verification_strength = "partial"
+
+        return {
+            "domain": name,
+            "dns_resolves": dns_resolves,
+            "ns_present": ns_present,
+            "a_present": a_present,
+            "mx_present": mx_present,
+            "spf_valid": domain.spf_verified,
+            "dkim_valid": domain.dkim_verified,
+            "dkim_selector": domain.metadata.get("dkim_detected_selector"),
+            "dmarc_valid": domain.dmarc_verified,
+            "dmarc_policy": domain.dmarc_policy if domain.dmarc_verified else None,
+            "verification_strength": verification_strength,
+            "provider_detected": detected,
+            "nameservers": ns_records,
+            "mx_hosts": mx_records,
+            "verification_timestamp": timestamp,
+            "verification_source": "live_dns",
+            "errors": errors,
+        }
 
 
     def diagnose_domain(self, domain_id: int) -> dict[str, object]:

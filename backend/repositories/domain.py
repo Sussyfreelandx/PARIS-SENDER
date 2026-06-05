@@ -76,6 +76,12 @@ class DomainRepository:
                     dkim_verified INTEGER NOT NULL DEFAULT 0,
                     spf_verified INTEGER NOT NULL DEFAULT 0,
                     dmarc_verified INTEGER NOT NULL DEFAULT 0,
+                    provider_name TEXT,
+                    provider_verified INTEGER NOT NULL DEFAULT 0,
+                    provider_domain_id TEXT,
+                    provider_status TEXT,
+                    provider_last_checked TEXT,
+                    sending_enabled INTEGER NOT NULL DEFAULT 0,
                     last_checked_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -94,6 +100,42 @@ class DomainRepository:
                 )
                 """
             )
+        self._migrate_schema()
+        self._create_indexes()
+
+    def _migrate_schema(self) -> None:
+        """Add provider-aware columns to pre-existing installations.
+
+        Older databases predate the provider verification fields; add any missing
+        columns in place so existing rows are preserved (backward compatible).
+        """
+        existing = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(domains)").fetchall()
+        }
+        additions = (
+            ("provider_name", "TEXT"),
+            ("provider_verified", "INTEGER NOT NULL DEFAULT 0"),
+            ("provider_domain_id", "TEXT"),
+            ("provider_status", "TEXT"),
+            ("provider_last_checked", "TEXT"),
+            ("sending_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        )
+        with self.connection:
+            for column, definition in additions:
+                if column not in existing:
+                    self.connection.execute(f"ALTER TABLE domains ADD COLUMN {column} {definition}")
+
+    def _create_indexes(self) -> None:
+        """Create lookup indexes used by provider-aware queries."""
+        with self.connection:
+            self.connection.execute("CREATE INDEX IF NOT EXISTS idx_domains_name ON domains(name)")
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_domains_provider_status ON domains(provider_status)"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_domains_provider_verified ON domains(provider_verified)"
+            )
 
     def create(self, domain: Domain) -> Domain:
         """Persist and return a new domain."""
@@ -104,8 +146,10 @@ class DomainRepository:
                     name, status, dkim_selector, dkim_private_key, dkim_public_key,
                     spf_record, dmarc_record, dmarc_policy, health_score,
                     dkim_verified, spf_verified, dmarc_verified,
+                    provider_name, provider_verified, provider_domain_id,
+                    provider_status, provider_last_checked, sending_enabled,
                     last_checked_at, created_at, updated_at, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._to_params(domain),
             )
@@ -125,6 +169,8 @@ class DomainRepository:
                     name = ?, status = ?, dkim_selector = ?, dkim_private_key = ?,
                     dkim_public_key = ?, spf_record = ?, dmarc_record = ?, dmarc_policy = ?,
                     health_score = ?, dkim_verified = ?, spf_verified = ?, dmarc_verified = ?,
+                    provider_name = ?, provider_verified = ?, provider_domain_id = ?,
+                    provider_status = ?, provider_last_checked = ?, sending_enabled = ?,
                     last_checked_at = ?, created_at = ?, updated_at = ?, metadata = ?
                 WHERE id = ?
                 """,
@@ -173,6 +219,14 @@ class DomainRepository:
     def _record_health(self, domain: Domain) -> None:
         if domain.id is None:
             return
+        last = self.connection.execute(
+            "SELECT health_score, status FROM domain_health_history "
+            "WHERE domain_id = ? ORDER BY id DESC LIMIT 1",
+            (domain.id,),
+        ).fetchone()
+        if last is not None and last["health_score"] == domain.health_score and last["status"] == domain.status.value:
+            # Avoid duplicate history rows: only record when status or score changes.
+            return
         with self.connection:
             self.connection.execute(
                 "INSERT INTO domain_health_history (domain_id, health_score, status, recorded_at) VALUES (?, ?, ?, ?)",
@@ -210,6 +264,12 @@ class DomainRepository:
             int(domain.dkim_verified),
             int(domain.spf_verified),
             int(domain.dmarc_verified),
+            domain.provider_name,
+            int(domain.provider_verified),
+            domain.provider_domain_id,
+            domain.provider_status,
+            _dt_to_text(domain.provider_last_checked) if domain.provider_last_checked else None,
+            int(domain.sending_enabled),
             _dt_to_text(domain.last_checked_at) if domain.last_checked_at else None,
             _dt_to_text(domain.created_at),
             _dt_to_text(domain.updated_at),
@@ -231,6 +291,11 @@ class DomainRepository:
             dkim_verified=bool(row["dkim_verified"]),
             spf_verified=bool(row["spf_verified"]),
             dmarc_verified=bool(row["dmarc_verified"]),
+            provider_name=row["provider_name"],
+            provider_verified=bool(row["provider_verified"]),
+            provider_domain_id=row["provider_domain_id"],
+            provider_status=row["provider_status"],
+            provider_last_checked=_dt_from_text(row["provider_last_checked"]),
             last_checked_at=_dt_from_text(row["last_checked_at"]),
             created_at=_dt_from_text(row["created_at"]),  # type: ignore[arg-type]
             updated_at=_dt_from_text(row["updated_at"]),  # type: ignore[arg-type]
