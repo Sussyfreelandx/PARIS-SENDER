@@ -35,13 +35,27 @@ class FakeProvider(DeliveryProvider):
 
 
 class FakeResolver:
-    def __init__(self, records: dict[str, list[str]] | None = None) -> None:
+    def __init__(
+        self,
+        records: dict[str, list[str]] | None = None,
+        *,
+        nameservers: list[str] | None = None,
+        mx: dict[str, list[str]] | None = None,
+    ) -> None:
         self.records = records or {}
+        self.nameservers = nameservers or []
+        self.mx = mx or {}
         self.hosts: list[str] = []
 
     def resolve_txt(self, host: str) -> list[str]:
         self.hosts.append(host)
         return self.records.get(host, [])
+
+    def resolve_ns(self, host: str) -> list[str]:
+        return list(self.nameservers)
+
+    def resolve_mx(self, domain: str) -> list[str]:
+        return list(self.mx.get(domain, []))
 
 
 class FixedClock:

@@ -55,7 +55,7 @@ def test_failed_path_on_provider_result_and_exception():
 def test_delivery_uses_single_mime_helper(monkeypatch):
     calls = []
 
-    def fake_builder(sender, recipient, subject, content, *, html=False):
+    def fake_builder(sender, recipient, subject, content, *, html=False, attachments=None):
         calls.append((sender, recipient, subject, content, html))
 
         class Message(dict):

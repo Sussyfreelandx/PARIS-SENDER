@@ -129,3 +129,48 @@ def test_send_allowed_for_unmanaged_domain():
     )
     assert sent.status_code == 200
     assert sent.json()["sent"] == 1
+
+class _DelayedResolver:
+    """Resolver that only starts returning the published records after N calls,
+    emulating DNS propagation so the auto-verify retry loop can be exercised."""
+
+    def __init__(self, records, available_after):
+        self.records = records
+        self.available_after = available_after
+        self.calls = 0
+
+    def resolve_txt(self, host):
+        self.calls += 1
+        if self.calls < self.available_after:
+            return []
+        return self.records.get(host, [])
+
+
+def test_auto_verify_retries_until_records_propagate():
+    client, service = _client()
+    domain = service.add_domain("acme.com")
+    records = {r.host: [r.value] for r in service.required_records(domain)}
+    # Records become visible only on the 4th resolver call (i.e. second attempt).
+    service.resolver = _DelayedResolver(records, available_after=4)
+
+    result = service.auto_verify_domain(domain.id, attempts=4, interval=0, sleeper=lambda _s: None)
+    assert result.status.value == "VERIFIED"
+    assert result.is_verified is True
+
+
+def test_auto_verify_endpoint_verifies_immediately_when_published():
+    client, service = _client()
+    created = client.post("/domains", json={"name": "acme.com"}).json()
+    domain_id = created["id"]
+    records = {r["host"]: [r["value"]] for r in created["records"]}
+    service.resolver = FakeResolver(records)
+
+    resp = client.post(f"/domains/{domain_id}/auto-verify")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "VERIFIED"
+    assert resp.json()["health_score"] == 100
+
+
+def test_auto_verify_endpoint_404_for_unknown_domain():
+    client, _ = _client()
+    assert client.post("/domains/999999/auto-verify").status_code == 404
