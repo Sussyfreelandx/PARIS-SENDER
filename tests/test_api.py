@@ -35,6 +35,32 @@ def test_api_create_send_status_and_health():
     assert status.json()["status_rollups"]["SENT"] == 1
 
 
+def test_api_list_and_delete_campaign():
+    from fastapi.testclient import TestClient
+
+    repo = LedgerRepository(":memory:")
+    app = create_app(repository=repo, provider=FakeProvider())
+    client = TestClient(app)
+
+    campaign_id = client.post("/campaigns", json={"name": "Deletable"}).json()["id"]
+    client.post(
+        f"/campaigns/{campaign_id}/send",
+        json={"recipients": ["a@example.com"], "subject": "Hi", "content": "Body", "sender": "s@example.com"},
+    )
+
+    listing = client.get("/campaigns")
+    assert listing.status_code == 200
+    assert any(item["id"] == campaign_id for item in listing.json()["campaigns"])
+
+    deleted = client.delete(f"/campaigns/{campaign_id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "campaign_id": campaign_id}
+
+    assert client.get(f"/campaigns/{campaign_id}").status_code == 404
+    assert client.delete(f"/campaigns/{campaign_id}").status_code == 404
+    assert all(item["id"] != campaign_id for item in client.get("/campaigns").json()["campaigns"])
+
+
 def test_root_and_favicon_routes_do_not_404():
     from fastapi.testclient import TestClient
 

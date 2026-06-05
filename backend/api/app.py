@@ -398,6 +398,15 @@ def create_app(
         campaign = repo.create_campaign(payload.name)
         return {"id": campaign.id, "name": campaign.name, "created_at": campaign.created_at.isoformat()}
 
+    @app.get("/campaigns")
+    def list_campaigns(repo: LedgerRepository = Depends(get_repository)) -> dict[str, Any]:
+        return {
+            "campaigns": [
+                {"id": campaign.id, "name": campaign.name, "created_at": campaign.created_at.isoformat()}
+                for campaign in repo.list_campaigns()
+            ]
+        }
+
     @app.post("/smtp/test", response_model=SmtpTestResult)
     def test_smtp(payload: SmtpSettings) -> SmtpTestResult:
         """Validate SMTP credentials by opening a connection (and authenticating
@@ -599,6 +608,18 @@ def create_app(
             "name": campaign.name,
             "status_rollups": {status.value: rollups.get(status, 0) for status in Status},
         }
+
+    @app.delete("/campaigns/{campaign_id}")
+    def delete_campaign(
+        campaign_id: int,
+        repo: LedgerRepository = Depends(get_repository),
+        logger: LoggingService = Depends(get_logging_service),
+    ) -> dict[str, Any]:
+        deleted = repo.delete_campaign(campaign_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="campaign not found")
+        logger.info(LogComponent.CAMPAIGN, "campaign deleted", campaign_id=campaign_id)
+        return {"deleted": True, "campaign_id": campaign_id}
 
     # ------------------------------------------------------------------ compose
     @app.post("/compose/preview")

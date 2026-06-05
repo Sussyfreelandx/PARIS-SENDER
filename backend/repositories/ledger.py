@@ -123,6 +123,37 @@ class LedgerRepository:
             return None
         return Campaign(id=row["id"], name=row["name"], created_at=_dt_from_text(row["created_at"]), metadata=json.loads(row["metadata"]))
 
+    def list_campaigns(self) -> list[Campaign]:
+        """Return all campaigns, most recently created first."""
+        rows = self.connection.execute("SELECT * FROM campaigns ORDER BY id DESC").fetchall()
+        return [
+            Campaign(
+                id=row["id"],
+                name=row["name"],
+                created_at=_dt_from_text(row["created_at"]),
+                metadata=json.loads(row["metadata"]),
+            )
+            for row in rows
+        ]
+
+    def delete_campaign(self, campaign_id: int) -> bool:
+        """Delete a campaign and all of its recipients, messages, and events.
+
+        Returns ``True`` when a campaign was removed and ``False`` when no
+        campaign matched the given id.
+        """
+        with self.connection:
+            exists = self.connection.execute(
+                "SELECT 1 FROM campaigns WHERE id = ?", (campaign_id,)
+            ).fetchone()
+            if exists is None:
+                return False
+            self.connection.execute("DELETE FROM events WHERE campaign_id = ?", (campaign_id,))
+            self.connection.execute("DELETE FROM messages WHERE campaign_id = ?", (campaign_id,))
+            self.connection.execute("DELETE FROM recipients WHERE campaign_id = ?", (campaign_id,))
+            self.connection.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
+        return True
+
     def add_recipient(self, campaign_id: int, email: str, metadata: dict[str, Any] | None = None) -> Recipient:
         """Add or return a recipient for a campaign."""
         now = _utc_now()
