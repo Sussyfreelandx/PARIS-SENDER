@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { analyzeCompose, previewCompose } from '../api/client.js';
 import Badge from '../components/Badge.jsx';
+import AttachmentPicker from '../components/AttachmentPicker.jsx';
 
 const SETTINGS_KEY = 'paris_sender_settings';
 
@@ -112,6 +113,10 @@ export default function ComposeEditor() {
         <div className="actions">
           {(analysis?.placeholders || []).map((placeholder) => <Badge key={placeholder}>{placeholder}</Badge>)}
         </div>
+      </section>
+
+      <section className="card">
+        <AttachmentPicker />
       </section>
     </div>
   );

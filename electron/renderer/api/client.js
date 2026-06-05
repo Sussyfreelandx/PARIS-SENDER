@@ -121,6 +121,8 @@ export const getDomains = () => get('/domains');
 export const createDomain = (payload) => post('/domains', payload);
 export const getDomain = (id) => get(`/domains/${encodeURIComponent(id)}`);
 export const verifyDomain = (id) => post(`/domains/${encodeURIComponent(id)}/verify`, {});
+export const autoVerifyDomain = (id) => post(`/domains/${encodeURIComponent(id)}/auto-verify`, {});
+export const diagnoseDomain = (id) => post(`/domains/${encodeURIComponent(id)}/diagnose`, {});
 export const updateDmarcPolicy = (id, policy) => patch(`/domains/${encodeURIComponent(id)}/dmarc`, { policy });
 export const rotateDkim = (id) => post(`/domains/${encodeURIComponent(id)}/dkim/rotate`, {});
 export const deleteDomain = (id) => del(`/domains/${encodeURIComponent(id)}`);

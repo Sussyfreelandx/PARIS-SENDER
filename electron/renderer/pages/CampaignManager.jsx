@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createCampaign, getCampaign, getDomains, sendCampaign } from '../api/client.js';
 import { StatusBadge } from '../components/Badge.jsx';
 import HealthBars from '../components/HealthBars.jsx';
+import { readAttachments, subscribeAttachments, toApiAttachments } from '../api/attachments.js';
 
 const CAMPAIGN_KEY = 'paris_sender_campaigns';
 const CONTACT_KEY = 'paris_sender_contacts';
@@ -30,8 +31,11 @@ export default function CampaignManager() {
   const [content, setContent] = useState('Hello [firstname],\n\nHere is the latest campaign update.');
   const [html, setHtml] = useState(false);
   const [nonSmtpDelivery, setNonSmtpDelivery] = useState(() => Boolean(readJson(SETTINGS_KEY, {}).nonSmtpDefault));
+  const [attachments, setAttachments] = useState(readAttachments);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+
+  useEffect(() => subscribeAttachments(setAttachments), []);
 
   const contacts = readJson(CONTACT_KEY, []);
   const verifiedDomains = useMemo(() => domains.filter((domain) => domain.is_verified), [domains]);
@@ -70,7 +74,33 @@ export default function CampaignManager() {
     setError('');
     setResult(null);
     try {
-      const payload = { recipients: contacts, subject, content, sender, html, non_smtp_delivery: nonSmtpDelivery };
+      const settings = readJson(SETTINGS_KEY, {});
+      const payload = {
+        recipients: contacts,
+        subject,
+        content,
+        sender,
+        html,
+        non_smtp_delivery: nonSmtpDelivery,
+        attachments: toApiAttachments(attachments)
+      };
+      if (nonSmtpDelivery) {
+        const nonSmtp = settings.nonSmtp || {};
+        payload.non_smtp = {
+          port: Number(nonSmtp.port) || 25,
+          ...(nonSmtp.helo ? { helo_hostname: nonSmtp.helo } : {})
+        };
+      } else if (settings.smtp && settings.smtp.host) {
+        const smtp = settings.smtp;
+        payload.smtp = {
+          host: smtp.host,
+          port: Number(smtp.port) || 587,
+          use_tls: Boolean(smtp.use_tls),
+          use_ssl: Boolean(smtp.use_ssl),
+          ...(smtp.username ? { username: smtp.username } : {}),
+          ...(smtp.password ? { password: smtp.password } : {})
+        };
+      }
       const response = await sendCampaign(selectedId, payload);
       setResult(response);
       const fresh = await getCampaign(selectedId);
@@ -137,6 +167,7 @@ export default function CampaignManager() {
           <label className="switch"><input type="checkbox" checked={nonSmtpDelivery} onChange={(event) => setNonSmtpDelivery(event.target.checked)} /> Non-SMTP delivery</label>
         </div>
         <p className="muted">Recipients loaded from Contacts: {contacts.length}. Sender: {sender || 'choose a domain'}.</p>
+        <p className="muted">Attachments: {attachments.length}{attachments.length > 0 ? ` (${attachments.map((item) => item.filename).join(', ')})` : ''}. {nonSmtpDelivery ? 'Channel: non-SMTP (direct MX).' : 'Channel: SMTP.'}</p>
         <button className="primary" onClick={onSend} disabled={!canSend} type="button">Send campaign</button>
         {result && <pre className="code">{JSON.stringify(result, null, 2)}</pre>}
         {error && <div className="notice danger">{error}</div>}

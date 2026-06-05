@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
-import { createDomain, deleteDomain, getDomain, getDomainHistory, getDomains, rotateDkim, updateDmarcPolicy, verifyDomain } from '../api/client.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { autoVerifyDomain, createDomain, deleteDomain, diagnoseDomain, getDomain, getDomainHistory, getDomains, rotateDkim, updateDmarcPolicy, verifyDomain } from '../api/client.js';
 import { StatusBadge, VerifiedBadge } from '../components/Badge.jsx';
 import CopyButton from '../components/CopyButton.jsx';
 import HealthBars from '../components/HealthBars.jsx';
 
 const initialForm = { name: '', selector: 'default', dmarc_policy: 'none', spf_includes: '' };
+
+// Bounded auto-scan tuning: small, fast retries so the UI never hangs while DNS
+// records propagate. Each attempt runs a deep multi-resolver DKIM/SPF/DMARC scan
+// server-side; we stop the moment the domain verifies.
+const SCAN_MAX_ATTEMPTS = 6;
+const SCAN_INTERVAL_MS = 3000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function DomainManager() {
   const [domains, setDomains] = useState([]);
@@ -15,6 +23,9 @@ export default function DomainManager() {
   const [policy, setPolicy] = useState('none');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [diagnosis, setDiagnosis] = useState(null);
+  const [scan, setScan] = useState(null);
+  const scanTokenRef = useRef(0);
 
   const selectedRecords = useMemo(() => selected?.records || [], [selected]);
 
@@ -38,11 +49,79 @@ export default function DomainManager() {
 
   useEffect(() => {
     loadDomains().catch((err) => setError(err.message));
+    // Cancel any in-flight auto-scan when the page unmounts.
+    return () => {
+      scanTokenRef.current += 1;
+    };
   }, []);
 
   useEffect(() => {
-    loadSelected(selectedId).catch((err) => setError(err.message));
+    setDiagnosis(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        await loadSelected(selectedId);
+        if (cancelled || !selectedId) return;
+        // Smoothly auto-trigger the same bounded multi-resolver scan when an
+        // already-added but still-unverified domain is selected, so the user
+        // never has to click "Verify" themselves. Re-checks the latest state to
+        // avoid racing the load above and avoids re-scanning verified domains.
+        const fresh = await getDomain(selectedId).catch(() => null);
+        if (cancelled || !fresh) return;
+        const alreadyVerified = fresh.is_verified || fresh.status === 'VERIFIED';
+        const scanInFlight = scan && scan.domainId === selectedId && !scan.verified;
+        if (!alreadyVerified && !scanInFlight) {
+          runAutoScan(selectedId);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+
+  function stopScan() {
+    scanTokenRef.current += 1;
+    setScan(null);
+  }
+
+  // Automatically scan DKIM/SPF/DMARC and poll until the domain verifies, so the
+  // operator never has to click "Verify" repeatedly. Each attempt is a deep,
+  // multi-resolver server-side scan; the loop is bounded and cancellable so it
+  // stays fast and never hangs.
+  async function runAutoScan(domainId) {
+    if (!domainId) return;
+    const token = (scanTokenRef.current += 1);
+    setError('');
+    let result = null;
+    for (let attempt = 1; attempt <= SCAN_MAX_ATTEMPTS; attempt += 1) {
+      if (scanTokenRef.current !== token) return; // cancelled
+      setScan({ domainId, attempt, maxAttempts: SCAN_MAX_ATTEMPTS, verified: false, message: `Scanning DNS for DKIM/SPF/DMARC (attempt ${attempt}/${SCAN_MAX_ATTEMPTS})…` });
+      try {
+        result = await autoVerifyDomain(domainId);
+      } catch (err) {
+        if (scanTokenRef.current !== token) return;
+        setError(err.message);
+        setScan(null);
+        return;
+      }
+      if (scanTokenRef.current !== token) return;
+      setSelected((current) => (current && current.id === domainId ? result : current));
+      await loadDomains().catch(() => {});
+      if (result.is_verified || result.status === 'VERIFIED') {
+        setScan({ domainId, attempt, maxAttempts: SCAN_MAX_ATTEMPTS, verified: true, message: 'Domain verified — DKIM, SPF and DMARC all match.' });
+        return;
+      }
+      if (attempt < SCAN_MAX_ATTEMPTS) {
+        await sleep(SCAN_INTERVAL_MS);
+      }
+    }
+    if (scanTokenRef.current !== token) return;
+    setScan({ domainId, attempt: SCAN_MAX_ATTEMPTS, maxAttempts: SCAN_MAX_ATTEMPTS, verified: false, message: 'Records not found yet. They may still be propagating — publish them and the scan will pick them up, or run Diagnose DNS.' });
+  }
 
   async function withBusy(action) {
     setBusy(true);
@@ -61,13 +140,17 @@ export default function DomainManager() {
 
   async function addDomain(event) {
     event.preventDefault();
+    let createdId = null;
     await withBusy(async () => {
       const payload = { ...form, spf_includes: form.spf_includes.split(/[\s,]+/).filter(Boolean) };
       const created = await createDomain(payload);
       setForm(initialForm);
       setSelectedId(created.id);
+      createdId = created.id;
       return created.id;
     });
+    // Kick off the automatic DKIM/SPF/DMARC scan as soon as the domain is added.
+    if (createdId) runAutoScan(createdId);
   }
 
   return (
@@ -120,10 +203,19 @@ export default function DomainManager() {
             <>
               <div className="card-header"><strong>{selected.name}</strong><StatusBadge status={selected.status} /></div>
               <div className="actions">
-                <button className="primary" onClick={() => withBusy(async () => setSelected(await verifyDomain(selected.id)))} disabled={busy} type="button">Verify</button>
+                {scan && scan.domainId === selected.id && !scan.verified ? (
+                  <button className="secondary" onClick={stopScan} type="button">Stop scan</button>
+                ) : (
+                  <button className="primary" onClick={() => runAutoScan(selected.id)} disabled={busy} type="button">Auto-verify</button>
+                )}
+                <button className="secondary" onClick={() => withBusy(async () => setSelected(await verifyDomain(selected.id)))} disabled={busy} type="button">Verify once</button>
+                <button className="secondary" onClick={() => withBusy(async () => { const report = await diagnoseDomain(selected.id); setDiagnosis(report); await loadSelected(selected.id); })} disabled={busy} type="button">Diagnose DNS</button>
                 <button className="secondary" onClick={() => withBusy(async () => setSelected(await rotateDkim(selected.id)))} disabled={busy} type="button">Rotate DKIM</button>
-                <button className="danger" onClick={() => withBusy(async () => { await deleteDomain(selected.id); setSelectedId(''); setSelected(null); return ''; })} disabled={busy} type="button">Delete</button>
+                <button className="danger" onClick={() => { stopScan(); withBusy(async () => { await deleteDomain(selected.id); setSelectedId(''); setSelected(null); return ''; }); }} disabled={busy} type="button">Delete</button>
               </div>
+              {scan && scan.domainId === selected.id && (
+                <div className={scan.verified ? 'notice success' : 'notice'} style={{ marginTop: 12 }}>{scan.message}</div>
+              )}
               <div className="form-row" style={{ marginTop: 16 }}>
                 <label>DMARC policy</label>
                 <div className="actions">
@@ -162,6 +254,34 @@ export default function DomainManager() {
             {history.length === 0 && <p className="muted">No history returned for this domain yet.</p>}
           </section>
         </div>
+      )}
+
+      {selected && diagnosis && (
+        <section className="card">
+          <div className="card-header">
+            <h2>DNS diagnosis</h2>
+            <button className="ghost small" onClick={() => setDiagnosis(null)} type="button">Dismiss</button>
+          </div>
+          <p className="muted">
+            Detected provider: <strong>{diagnosis.provider?.provider || 'Unknown'}</strong>
+            {diagnosis.provider?.nameservers?.length ? ` (${diagnosis.provider.nameservers.join(', ')})` : ''}
+          </p>
+          {diagnosis.provider?.guidance && <div className="notice">{diagnosis.provider.guidance}</div>}
+          <div className={diagnosis.failing_count === 0 ? 'notice success' : 'notice warning'}>{diagnosis.summary}</div>
+          <table className="table">
+            <thead><tr><th>Type</th><th>Host</th><th>Status</th><th>Diagnosis</th></tr></thead>
+            <tbody>
+              {(diagnosis.records || []).map((record) => (
+                <tr key={`diag-${record.record_type}-${record.host}`}>
+                  <td>{record.record_type}</td>
+                  <td className="code">{record.host}</td>
+                  <td>{record.verified ? <VerifiedBadge verified label="ok" /> : <VerifiedBadge verified={false} label="failing" />}</td>
+                  <td>{record.verified ? <span className="muted">Published correctly.</span> : <span>{record.hint || record.error}</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
       )}
     </div>
   );
