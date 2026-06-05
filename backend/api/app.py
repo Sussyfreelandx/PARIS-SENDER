@@ -14,15 +14,20 @@ from pydantic import BaseModel, Field
 from backend.models import HealthServer, LogComponent, LogSeverity, Status, WarmupConfig
 from backend.repositories import DomainRepository, LedgerRepository, LogRepository, WarmupRepository
 from backend.services import (
+    Attachment,
     DeliverabilityService,
     DeliveryProvider,
     DeliveryResult,
     DeliveryService,
+    DirectMxConfig,
+    DirectMxDeliveryProvider,
     DomainError,
     DomainService,
     HealthMonitorService,
     LoggingService,
     OutboundMessage,
+    SMTPConfig,
+    SMTPDeliveryProvider,
     WarmupService,
     start_health_monitor,
     start_log_archiver,
@@ -57,6 +62,37 @@ class CampaignCreate(BaseModel):
     name: str = Field(..., min_length=1)
 
 
+class AttachmentPayload(BaseModel):
+    """A base64-encoded file attachment sent from the compose UI."""
+
+    filename: str = Field(..., min_length=1)
+    content_base64: str = Field(..., min_length=1)
+    mime_type: str = Field("application/octet-stream", min_length=1)
+
+
+class SmtpSettings(BaseModel):
+    """SMTP relay configuration supplied per send (from the Settings screen)."""
+
+    host: str = Field(..., min_length=1)
+    port: int = Field(587, ge=1, le=65535)
+    username: str | None = None
+    password: str | None = None
+    use_tls: bool = True
+    use_ssl: bool = False
+    timeout: float = Field(30.0, gt=0)
+    allow_insecure_ssl: bool = False
+
+
+class NonSmtpSettings(BaseModel):
+    """Direct-to-MX (non-SMTP) configuration supplied per send."""
+
+    helo_hostname: str | None = None
+    port: int = Field(25, ge=1, le=65535)
+    timeout: float = Field(30.0, gt=0)
+    use_starttls: bool = True
+    allow_insecure_ssl: bool = True
+
+
 class SendRequest(BaseModel):
     """Request to send a campaign."""
 
@@ -66,6 +102,9 @@ class SendRequest(BaseModel):
     sender: str = Field("sender@example.com", min_length=1)
     html: bool = False
     non_smtp_delivery: bool = False
+    attachments: list[AttachmentPayload] = Field(default_factory=list)
+    smtp: SmtpSettings | None = None
+    non_smtp: NonSmtpSettings | None = None
 
 
 class PredictRequest(BaseModel):
@@ -436,7 +475,24 @@ def create_app(
                     detail=f"warmup limit blocked send: {decision.reason}; allowed now {decision.allowed_count}; next batch at {next_at}",
                 )
             warmup.schedule(sender_domain, campaign_id, len(payload.recipients))
-        selected_provider = non_smtp_delivery_provider if payload.non_smtp_delivery else delivery_provider
+        try:
+            attachments = [
+                Attachment.from_base64(item.filename, item.content_base64, item.mime_type)
+                for item in payload.attachments
+            ]
+        except ValueError as exc:
+            logger.warning(
+                LogComponent.CAMPAIGN,
+                "campaign send rejected: invalid attachment",
+                campaign_id=campaign_id,
+                error=str(exc),
+            )
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        selected_provider = _select_provider(
+            payload,
+            smtp_provider=delivery_provider,
+            non_smtp_provider=non_smtp_delivery_provider,
+        )
         service = DeliveryService(repo, selected_provider, logger=logger)
         receipts = service.send_campaign(
             campaign,
@@ -446,6 +502,7 @@ def create_app(
             sender=payload.sender,
             html=payload.html,
             delivery_channel=delivery_channel,
+            attachments=attachments or None,
         )
         if sender_domain and warmup.is_warmup(sender_domain):
             warmup.record_execution(sender_domain, campaign_id, len(receipts))
@@ -614,6 +671,21 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return _domain_payload(domains, domain)
 
+    @app.post("/domains/{domain_id}/auto-verify")
+    def auto_verify_domain(domain_id: int, domains: DomainService = Depends(get_domain_service)) -> dict[str, Any]:
+        try:
+            domain = domains.auto_verify_domain(domain_id)
+        except DomainError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _domain_payload(domains, domain)
+
+    @app.post("/domains/{domain_id}/diagnose")
+    def diagnose_domain(domain_id: int, domains: DomainService = Depends(get_domain_service)) -> dict[str, Any]:
+        try:
+            return domains.diagnose_domain(domain_id)
+        except DomainError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.patch("/domains/{domain_id}/dmarc")
     def update_dmarc(
         domain_id: int, payload: DmarcPolicyUpdate, domains: DomainService = Depends(get_domain_service)
@@ -646,6 +718,47 @@ def create_app(
         return {"id": domain_id, "history": domains.repository.health_history(domain_id)}
 
     return app
+
+
+def _select_provider(
+    payload: "SendRequest",
+    *,
+    smtp_provider: DeliveryProvider,
+    non_smtp_provider: DeliveryProvider,
+) -> DeliveryProvider:
+    """Pick the delivery provider for a send request.
+
+    When the request carries explicit transport configuration (from the Settings
+    screen) a freshly-configured provider is built for that send; otherwise the
+    provider injected at app-construction time is used (this keeps tests and any
+    pre-wired deployment working unchanged).
+    """
+    if payload.non_smtp_delivery:
+        if payload.non_smtp is not None:
+            return DirectMxDeliveryProvider(
+                DirectMxConfig(
+                    helo_hostname=payload.non_smtp.helo_hostname,
+                    port=payload.non_smtp.port,
+                    timeout=payload.non_smtp.timeout,
+                    use_starttls=payload.non_smtp.use_starttls,
+                    allow_insecure_ssl=payload.non_smtp.allow_insecure_ssl,
+                )
+            )
+        return non_smtp_provider
+    if payload.smtp is not None:
+        return SMTPDeliveryProvider(
+            SMTPConfig(
+                host=payload.smtp.host,
+                port=payload.smtp.port,
+                username=payload.smtp.username,
+                password=payload.smtp.password,
+                use_tls=payload.smtp.use_tls,
+                use_ssl=payload.smtp.use_ssl,
+                timeout=payload.smtp.timeout,
+                allow_insecure_ssl=payload.smtp.allow_insecure_ssl,
+            )
+        )
+    return smtp_provider
 
 
 def _score_content(subject: str, content: str) -> str:
